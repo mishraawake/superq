@@ -27,7 +27,7 @@ public class SBConsumerDefault implements SBConsumer<SMQMessage> {
   }
 
   int outstandingAck = 0;
-  final int maxUnackMessages = 10;
+  final int maxUnackMessages = 1000;
   // 0: starting, 1: started, 2: closing
   private int state = 0;
   private Map<Long, SMQMessage> unacks = new ConcurrentHashMap<>();
