@@ -1,30 +1,41 @@
 package org.apache.superq.outgoing;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 import org.apache.superq.ConsumerInfo;
 import org.apache.superq.SMQMessage;
 import org.apache.superq.datatype.MessageGroup;
 import org.apache.superq.log.Logger;
 import org.apache.superq.log.LoggerFactory;
+import org.apache.superq.network.SessionContext;
 import org.apache.superq.storage.Constraint;
 import org.apache.superq.storage.SBQueue;
 
 public class SBConsumerDefault implements SBConsumer<SMQMessage> {
 
   Logger logger = LoggerFactory.getLogger(SBConsumerDefault.class);
+  ConsumerInfo info;
+  SessionContext sessionContext;
+
+
+  public SBConsumerDefault(ConsumerInfo info, SessionContext sessionContext){
+    this.info = info;
+    this.sessionContext = sessionContext;
+  }
 
   int outstandingAck = 0;
   final int maxUnackMessages = 10;
   // 0: starting, 1: started, 2: closing
   private int state = 0;
-  private List<SMQMessage> unacks;
+  private Map<Long, SMQMessage> unacks = new ConcurrentHashMap<>();
   private SBQueue<SMQMessage> queue;
 
   @Override
   public ConsumerInfo getConsumerInfo() {
-    return null;
+    return info;
   }
 
   @Override
@@ -40,14 +51,17 @@ public class SBConsumerDefault implements SBConsumer<SMQMessage> {
       logger.warnLog("Consumer is closing so can not relay the messages");
     }
     ++outstandingAck;
-    unacks.add(message);
+    unacks.putIfAbsent(message.getJmsMessageLongId(), message);
     doDispatch(message);
     // actual dispatch the message
     // state when consumer is
   }
 
   private void doDispatch(SMQMessage message){
-
+    message.setSessionId(sessionContext.getSessionInfo().getSessionId());
+    message.setConsumerId(info.getId());
+    message.setConnectionId(sessionContext.getConnectionContext().getInfo().getConnectionId());
+    sessionContext.getConnectionContext().sendAsyncPacket(message);
     logger.infoLog("dispatched message with id {} ");
   }
 
@@ -59,7 +73,7 @@ public class SBConsumerDefault implements SBConsumer<SMQMessage> {
 
   @Override
   public void start() {
-
+    state = 1;
   }
 
   @Override
@@ -76,7 +90,10 @@ public class SBConsumerDefault implements SBConsumer<SMQMessage> {
 
 
   @Override
-  public void ack(SMQMessage message) {
+  public void ack(long messageId) {
+    unacks.remove(messageId);
+    outstandingAck--;
+
     // for the ack of default message
     // batched ack, remove ack and remove actual message
     // individual ack
@@ -106,7 +123,7 @@ public class SBConsumerDefault implements SBConsumer<SMQMessage> {
 
   @Override
   public boolean canAcceptMoreMessage() {
-    return false;
+    return outstandingAck < maxUnackMessages;
   }
 
   @Override
@@ -116,7 +133,7 @@ public class SBConsumerDefault implements SBConsumer<SMQMessage> {
 
   @Override
   public boolean matches(SMQMessage message) {
-    return false;
+    return true;
   }
 
   @Override

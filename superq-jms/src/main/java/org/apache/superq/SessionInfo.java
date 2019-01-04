@@ -3,8 +3,9 @@ package org.apache.superq;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
+import java.util.Objects;
 
-public class SessionInfo extends CorrelatedPacket {
+public class SessionInfo extends SerializationSupport {
 
   long sessionId;
   long connectionId;
@@ -41,5 +42,29 @@ public class SessionInfo extends CorrelatedPacket {
   @Override
   public short getType(){
     return 8;
+  }
+
+  @Override
+  public boolean equals(Object o) {
+    if (this == o)
+      return true;
+    if (o == null || getClass() != o.getClass())
+      return false;
+    SessionInfo that = (SessionInfo) o;
+    return sessionId == that.sessionId &&
+            connectionId == that.connectionId;
+  }
+
+  @Override
+  public int hashCode() {
+    return Objects.hash(sessionId, connectionId);
+  }
+
+  @Override
+  public String toString() {
+    return "SessionInfo{" +
+            "sessionId=" + sessionId +
+            ", connectionId=" + connectionId +
+            '}';
   }
 }

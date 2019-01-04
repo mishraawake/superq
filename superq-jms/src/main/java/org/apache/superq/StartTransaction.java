@@ -30,12 +30,14 @@ public class StartTransaction extends CorrelatedPacket {
   public void serializeFields(DataOutputStream dos) throws IOException {
     super.serializeFields(dos);
     serializeLong(dos, transactionId);
+    serializeLong(dos, sessionId);
   }
 
   @Override
   public void deSerializeFields(DataInputStream dis) throws IOException {
     super.deSerializeFields(dis);
     transactionId = deSerializeLong(dis);
+    sessionId = deSerializeLong(dis);
   }
 
   public short getType(){

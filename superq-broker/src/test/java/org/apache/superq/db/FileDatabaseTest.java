@@ -3,10 +3,12 @@ package org.apache.superq.db;
 import java.io.File;
 import java.io.IOException;
 import java.util.Date;
+import java.util.List;
 import java.util.Random;
 
 import javax.jms.JMSException;
 
+import org.apache.superq.SMQDestination;
 import org.apache.superq.SMQTextMessage;
 import org.junit.Assert;
 import org.junit.Before;
@@ -21,10 +23,33 @@ public class FileDatabaseTest extends AbstractTest{
 
     if(new File(TEST_DATA_DIRECTORY).exists())
     for(File f: new File(TEST_DATA_DIRECTORY).listFiles()){
-      //if(f.exists())
-        //f.delete();
+      if(f.exists())
+        f.delete();
     }
     fileDatabase = new FileDatabase<SMQTextMessage>(TEST_DATA_DIRECTORY + "/myq", messageFactory);
+    fileDatabase.setTyped();
+  }
+
+  @Test
+  public void testMessageREtrieval() throws IOException, JMSException {
+
+    int counter = 0;
+    long stime = System.currentTimeMillis();
+    while(++counter < 2) {
+      for (int messageIndex = 0; messageIndex < 1000000; messageIndex++) {
+        fileDatabase.appendMessage(getMessage(messageIndex));
+      }
+      System.out.println("Total time spend" + (stime - System.currentTimeMillis()));
+
+      for (int batch = 0; batch < 10; batch++) {
+        List<SMQTextMessage> messagesList = fileDatabase.getOldMessage(100000);
+        Assert.assertEquals(messagesList.size(), 100000);
+      }
+
+      Assert.assertEquals(fileDatabase.getOldMessage(100).size(), 0);
+    }
+
+    System.out.println("Total time spend" + (stime - System.currentTimeMillis()));
   }
 
   @Test
@@ -101,16 +126,45 @@ public class FileDatabaseTest extends AbstractTest{
   }
 
   private SMQTextMessage getMessage(long index) throws IOException, JMSException {
-    SMQTextMessage message = new SMQTextMessage();
-    message.setText(getString(index));
-    return message;
+    SMQTextMessage textMessage = new SMQTextMessage();
+    textMessage.setText(getString(index));
+    textMessage.setJmsMessageLongId(1l);
+    textMessage.setProducerId(2l);
+    textMessage.setSessionId(3l);
+    textMessage.setConnectionId(4l);
+    textMessage.setConsumerId(5l);
+    textMessage.setGroupId("Group");
+    textMessage.setGroupSegId(1);
+    textMessage.setJMSCorrelationID("correlation");
+    textMessage.setJMSDeliveryMode(3);
+    textMessage.setJMSDeliveryTime(new Date().getTime());
+    textMessage.setJMSDestination(new SMQDestination() {
+      @Override
+      public int getDestinationId() {
+        return 10;
+      }
+    });
+    textMessage.setJMSExpiration(new Date().getTime());
+    // textMessage.setJMSMessageID("jmsmessageId");
+    textMessage.setJMSPriority(9);
+    textMessage.setJMSRedelivered(false);
+    textMessage.setJMSReplyTo(new SMQDestination() {
+      @Override
+      public int getDestinationId() {
+        return 11;
+      }
+
+    });
+    textMessage.setJMSTimestamp(new Date().getTime());
+    textMessage.setTransactionId(100);
+    return textMessage;
   }
 
 
 
   private static String getString(long index) throws IOException {
     StringBuilder sb = new StringBuilder();
-    for (int i = 0; i < 10; i++) {
+    for (int i = 0; i < 50; i++) {
       sb.append("Hello First message ");
     }
     sb.append(index);

@@ -7,13 +7,16 @@ import java.util.concurrent.LinkedBlockingQueue;
 public class CallbackExecutor implements Runnable {
 
   private BlockingQueue<Task> callbackTasks;
+  private ThreadLocal<Boolean> callbackThread;
 
-  public CallbackExecutor(){
+  public CallbackExecutor(ThreadLocal<Boolean> callbackThread){
     callbackTasks = new LinkedBlockingQueue<>();
+    this.callbackThread = callbackThread;
   }
 
   @Override
   public void run() {
+    callbackThread.set(true);
     Task task = null;
     try {
       while ((task = callbackTasks.take()) != null) {

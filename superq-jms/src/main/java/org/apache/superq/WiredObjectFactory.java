@@ -15,7 +15,11 @@ public interface WiredObjectFactory {
           ProduceAck.class, //6
           QueueInfo.class, //7
           SessionInfo.class, //8
-          ConsumerInfo.class //9
+          ConsumerInfo.class, //9
+          BrowserInfo.class, //10
+          ConsumerAck.class //11
+
+
   };
 
   public Class getInitialPartialRequest(short type);

@@ -38,7 +38,8 @@ public class OneRowTest extends AbstractTest {
   @Test
   public void testWithPrcessedBasicIndexAppend() throws IOException {
     int entries = 100;
-    indexOneRow.medadata.setProcessedSize(10000);
+    int processedEntries = 1000;
+    indexOneRow.medadata.setProcessedSize(processedEntries*IndexEntry.SIZE);
     insertEntries(entries);
     Assert.assertEquals(indexOneRow.memoryCell.getLastValidLocation(), entries*IndexEntry.SIZE);
     Assert.assertEquals(indexOneRow.medadata.getSize(), entries*IndexEntry.SIZE);
@@ -66,17 +67,18 @@ public class OneRowTest extends AbstractTest {
   @Test
   public void testProcessedBasicInvalidIndexAppend() throws IOException {
     int entries = 100;
-    indexOneRow.medadata.setProcessedSize(10000);
+    int processedEntries = 1000;
+    indexOneRow.medadata.setProcessedSize(processedEntries*IndexEntry.SIZE);
     insertEntries(entries);
     IndexEntry indexEntry = getIndexEntry();
     boolean exception = false;
     try {
-      indexOneRow.append(indexEntry, 10000 + entries * IndexEntry.SIZE - 10);
+      indexOneRow.append(indexEntry, processedEntries*IndexEntry.SIZE + entries * IndexEntry.SIZE - 10);
     } catch (RuntimeException e){
       exception = true;
     }
     Assert.assertTrue(exception);
-    indexOneRow.append(indexEntry, 10000 + entries * IndexEntry.SIZE );
+    indexOneRow.append(indexEntry, processedEntries*IndexEntry.SIZE + entries * IndexEntry.SIZE );
     entries++;
     Assert.assertEquals(indexOneRow.memoryCell.getLastValidLocation(), entries*IndexEntry.SIZE );
     Assert.assertEquals(indexOneRow.medadata.getSize(), entries*IndexEntry.SIZE);
@@ -157,22 +159,23 @@ public class OneRowTest extends AbstractTest {
   @Test
   public void testProcessedEdgeGet() throws IOException {
     int entries = (int)(OneRow.APPEND_MC_SIZE / IndexEntry.SIZE) + 100;
-    indexOneRow.medadata.setProcessedSize(10000);
+    int processedEntries = 1000;
+    indexOneRow.medadata.setProcessedSize(processedEntries*IndexEntry.SIZE);
     insertEntries(entries);
 
 //    Assert.assertEquals(indexOneRow.memoryCell.getLastValidLocation(), entries*IndexEntry.SIZE);
     Assert.assertEquals(indexOneRow.medadata.getSize(), entries*IndexEntry.SIZE);
 
-    IndexEntry entry = indexOneRow.getEntry(10000 + 0, IndexEntry.SIZE);
+    IndexEntry entry = indexOneRow.getEntry(processedEntries * IndexEntry.SIZE, IndexEntry.SIZE);
 
     Assert.assertEquals(entry.getMessageLocation(), 0);
 
-    entry = indexOneRow.getEntry(10000 + IndexEntry.SIZE*113,IndexEntry.SIZE);
+    entry = indexOneRow.getEntry(processedEntries * IndexEntry.SIZE + IndexEntry.SIZE*113,IndexEntry.SIZE);
     Assert.assertEquals(entry.getMessageLocation(), 113);
 
     entries -= 100;
     for (int i = 0; i < 100; i++) {
-      entry = indexOneRow.getEntry(10000 + IndexEntry.SIZE*(entries + i ), IndexEntry.SIZE);
+      entry = indexOneRow.getEntry(processedEntries * IndexEntry.SIZE + IndexEntry.SIZE*(entries + i ), IndexEntry.SIZE);
       Assert.assertEquals(entry.getMessageLocation(), entries + i );
     }
   }

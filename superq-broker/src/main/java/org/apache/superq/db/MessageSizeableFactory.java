@@ -7,7 +7,7 @@ import org.apache.superq.Serialization;
 public class MessageSizeableFactory<T extends Serialization> implements SizeableFactory<SMQMessage> {
   @Override
   public SMQMessage getSizeable() {
-    return new SMQMessage(){};
+    return new SMQTextMessage();
   }
 
   @Override

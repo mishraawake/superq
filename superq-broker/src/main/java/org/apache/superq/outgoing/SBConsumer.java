@@ -14,7 +14,7 @@ public interface SBConsumer<M> {
   void start();
   void dispose();
   M pull();
-  void ack(M m);
+  void ack(long messageId);
   int outstandingAcks();
   List<Constraint> getConstraints();
   void addConstraint(Constraint constraint);

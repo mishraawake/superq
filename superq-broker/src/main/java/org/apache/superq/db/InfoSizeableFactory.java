@@ -1,7 +1,6 @@
 package org.apache.superq.db;
 
 import org.apache.superq.ConsumerInfo;
-import org.apache.superq.DestinationInfo;
 import org.apache.superq.QueueInfo;
 import org.apache.superq.Serialization;
 

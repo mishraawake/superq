@@ -1,5 +1,8 @@
 target
+*.ipr
+*.iws
 *.iml
 *.log
 .idea
 out
+data

@@ -2,6 +2,7 @@ package org.apache.superq.db;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicLong;
@@ -64,7 +65,7 @@ public class FileDatabase<T extends Serialization> {
     if(indexEntry.getMessageLocation() < 0){
       return null;
     }
-    return getMessageFromMessageDB(indexEntry);
+    return getMessageFromMessageDB(indexEntry, messageId);
   }
 
   public synchronized List<T> getAllMessage() throws IOException {
@@ -75,10 +76,9 @@ public class FileDatabase<T extends Serialization> {
         indexEntry = indexRow.getEntry(i*IndexEntry.SIZE, IndexEntry.SIZE);
         ++i;
         if(indexEntry == null || indexEntry.getMessageLength() == 0){
-          System.out.println(indexEntry);
           break;
         }
-        list.add(getMessageFromMessageDB(indexEntry));
+        list.add(getMessageFromMessageDB(indexEntry, i));
 
     } while(indexEntry != null);
     return list;
@@ -90,9 +90,13 @@ public class FileDatabase<T extends Serialization> {
     return messageId*IndexEntry.SIZE;
   }
 
-  private T getMessageFromMessageDB(IndexEntry indexEntry) throws IOException {
-    return messageRow.getEntry(indexEntry.getMessageLocation() -
+  private T getMessageFromMessageDB(IndexEntry indexEntry, long messageId) throws IOException {
+    T result = messageRow.getEntry(indexEntry.getMessageLocation() -
                                 messageRow.getProcessedSize(), indexEntry.getMessageLength());
+    if(result instanceof SMQMessage){
+      ((SMQMessage)result).setJmsMessageLongId(messageId);
+    }
+    return result;
   }
 
   public void deleteMessage(long messageId) throws IOException{
@@ -165,7 +169,6 @@ public class FileDatabase<T extends Serialization> {
 
   public List<T> getOldMessage(int additional) throws IOException {
     long startIndex = indexRow.medadata.messageOffset();
-    System.out.println("offset ="+startIndex);
     List<T> list = new ArrayList<>();
     long i = startIndex;
     for(; i < startIndex + additional ; ++i){
@@ -178,14 +181,35 @@ public class FileDatabase<T extends Serialization> {
         i++;
         break;
       }
-      T message = getMessageFromMessageDB(indexEntry);
-      if(message instanceof SMQMessage){
-        ((SMQMessage)message).setJmsMessageLongId(i);
-      }
+      T message = getMessageFromMessageDB(indexEntry, i);
       list.add(message);
     }
     if(startIndex != i)
        indexRow.medadata.messageOffset(i);
+    return list;
+  }
+
+  public List<T> browseOldMessage(int additional, Long messageId) throws IOException {
+    long startIndex = indexRow.medadata.leftoverOffset();
+    if(messageId != null){
+      startIndex = messageId;
+    }
+
+    List<T> list = new LinkedList<>();
+
+    for (long messageIndex = startIndex ; list.size() <  additional; messageIndex++) {
+      IndexEntry indexEntry = indexRow.getEntry(messageIndex*IndexEntry.SIZE, IndexEntry.SIZE);
+      if(indexEntry ==  null){
+        break;
+      }
+      if(indexEntry.getMessageLength() == 0){
+        System.out.println("foota hua index entry ="+startIndex);
+        messageIndex++;
+        break;
+      }
+      T message = getMessageFromMessageDB(indexEntry, messageIndex);
+      list.add(message);
+    }
     return list;
   }
 
@@ -205,10 +229,10 @@ public class FileDatabase<T extends Serialization> {
         messageIndex++;
         break;
       }
-      T message = getMessageFromMessageDB(indexEntry);
-      if(message instanceof SMQMessage){
-        ((SMQMessage)message).setJmsMessageLongId(messageIndex);
+      if(indexEntry.getMessageLocation() == 0){
+        continue;
       }
+      T message = getMessageFromMessageDB(indexEntry, messageIndex);
       list.add(message);
     }
     return list;

@@ -13,6 +13,7 @@ import org.apache.superq.Serialization;
 public class FileDatabaseFactoryImpl<T extends Serialization> implements FileDatabaseFactory<Serialization> {
 
   Map<String, QueueDatabase> databases = new ConcurrentHashMap<>();
+  FileDatabase<Serialization> infoDb;
 
   String dbLocation;
 
@@ -20,7 +21,7 @@ public class FileDatabaseFactoryImpl<T extends Serialization> implements FileDat
 
 
   static {
-    factory = new FileDatabaseFactoryImpl<>("data/filedata");
+    factory = new FileDatabaseFactoryImpl<>("/Users/pankaj/dev/open-source/superq/data");
     try {
       ((FileDatabaseFactoryImpl)factory).createDatabases();
     }
@@ -32,8 +33,11 @@ public class FileDatabaseFactoryImpl<T extends Serialization> implements FileDat
   private void createDatabases() throws IOException {
     File file = new File(dbLocation);
     if(!file.exists()){
-      if(!Files.exists(Paths.get(dbLocation)))
+      if(!Files.exists(Paths.get(dbLocation))) {
         Files.createDirectories(Paths.get(dbLocation));
+        infoDb = new FileDatabase<Serialization>(dbLocation  + "/info", new InfoSizeableFactory());
+        infoDb.setTyped();
+      }
       return;
     }
     for(File dir : file.listFiles()){
@@ -45,6 +49,8 @@ public class FileDatabaseFactoryImpl<T extends Serialization> implements FileDat
         databases.put(dbName, database);
       }
     }
+    infoDb = new FileDatabase<Serialization>(dbLocation  + "/info", new InfoSizeableFactory());
+    infoDb.setTyped();
   }
 
   public FileDatabaseFactoryImpl(String dbLocation){
@@ -86,6 +92,11 @@ public class FileDatabaseFactoryImpl<T extends Serialization> implements FileDat
     databases.get(dbName).infoDb = infoDatabase;
 
     return infoDatabase;
+  }
+
+  @Override
+  public FileDatabase<Serialization> getInfoDatabase(SizeableFactory<Serialization> factory) throws IOException {
+    return infoDb;
   }
 
   @Override

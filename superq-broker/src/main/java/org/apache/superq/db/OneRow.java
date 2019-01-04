@@ -32,7 +32,7 @@ public class OneRow<T extends Serialization> {
   FileMetadata medadata;
   private boolean inMemory;
   AtomicLong totalMemoryAllocated = new AtomicLong(APPEND_MC_SIZE);
-  public static long APPEND_MC_SIZE = 24 * (1024*1024);//128 MB
+  public static long APPEND_MC_SIZE = 240 * (1024*1024);//128 MB
   public static long RANDOM_MC_SIZE = 10 *(1024*1024);//10 MB
   public static long TOTAL_MEMORY_SLAB = APPEND_MC_SIZE + RANDOM_MC_SIZE * 800;
   public int totalAccess = 0;
@@ -95,8 +95,8 @@ public class OneRow<T extends Serialization> {
   }
 
   private synchronized void initializeMMCell() throws IOException {
-    log.warnLog("Initializing Index and MyMessage Append Memory Cell");
     memoryCell = initializeAppendMemoryCell(randomAccessFile);
+    log.warnLog("Initializing "+this.name+" Append Memory Cell "+memoryCell.interval);
   }
 
   private synchronized MemoryCell initializeAppendMemoryCell(RandomAccessFile file) throws IOException {
@@ -138,6 +138,9 @@ public class OneRow<T extends Serialization> {
     sacrificeMemory();
     long rightSize = getNotMemoryMapped(index, true);
     long leftSize = getNotMemoryMapped(index, false);
+    if(rightSize == leftSize){
+      throw new RuntimeException("No memory left, right "+index);
+    }
     Interval interval = null;
     if(rightSize > RANDOM_MC_SIZE){
       interval = new Interval(index, index + RANDOM_MC_SIZE);
@@ -194,14 +197,19 @@ public class OneRow<T extends Serialization> {
       ByteBuffer bb = ByteBuffer.allocate(2);
       bb.putShort(entry.getType());
       location = appendInternals(bb.array(), location);
+      appendInternals(entry.getBuffer(), location + 2);
+      return location;
+    } else {
+      return appendInternals(entry.getBuffer(), location);
     }
-    return appendInternals(entry.getBuffer(), location);
+
   }
 
   private long appendInternals(byte[] leftOverByte, long location) throws IOException {
     int startingLocation = (int) (location - ( medadata.getProcessedSize() +  memoryCell.getStartIndex() ) );
     if(startingLocation < memoryCell.getLastValidLocation()){
-      throw new RuntimeException("Trying to overriding the data. Perhaps messageid creation logic got screwed.");
+      throw new RuntimeException("Trying to overriding the data. startingLocation " +startingLocation +
+                                         " Perhaps messageid creation logic got screwed "+memoryCell.getLastValidLocation());
     }
     int memorySizeLeft = (int)(memoryCell.getInterval().getSize() - startingLocation);
 
@@ -209,11 +217,12 @@ public class OneRow<T extends Serialization> {
       memoryCell.write(leftOverByte, startingLocation, 0, memorySizeLeft);
       medadata.setSize( (location - medadata.getProcessedSize()) + memorySizeLeft  );
       initializeMMCell();
-      memoryCell.write(leftOverByte,memorySizeLeft, leftOverByte.length );
+      memoryCell.write(leftOverByte,memorySizeLeft, leftOverByte.length - memorySizeLeft );
     } else {
       memoryCell.write(leftOverByte, startingLocation);
     }
     medadata.setSize((location - medadata.getProcessedSize()) + leftOverByte.length);
+    this.randomAccessFile.getChannel().force(true);
     return location;
   }
 
@@ -256,14 +265,16 @@ public class OneRow<T extends Serialization> {
       return getFromMemory(locationWF, entry);
     }
   //  ByteBuffer byteBuffer = ByteBuffer.allocate(size);
-    byte[] readBytes = getBytes(size, locationWF);
+   // byte[] readBytes = getBytes(size, locationWF);
     if(isTyped()){
       ByteBuffer bb = ByteBuffer.allocate(2);
       byte[] sizeBytes = getBytes(2, locationWF);
-      bb.put(readBytes,0,2);
+      bb.put(sizeBytes);
+      bb.flip();
       short type = bb.getShort();
       entry = sizeableFactory.getSizeableByType(type);
       locationWF += 2;
+      size -= 2;
     } else {
       entry = sizeableFactory.getSizeable();
     }

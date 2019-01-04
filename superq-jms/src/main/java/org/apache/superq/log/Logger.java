@@ -9,7 +9,7 @@ public class Logger {
   }
 
   public void errorLog(String log, Object ... params){
-    System.out.println();
+    System.out.println(log);
   }
 
   public void fatalLog(String log, Object ... params){

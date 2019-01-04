@@ -9,6 +9,7 @@ public class ConnectionInfoHandler implements RequestHandler<ConnectionInfo> {
   @Override
   public void handle(ConnectionInfo info, ConnectionContext connectionContext) {
     connectionContext.setInfo(info);
+    connectionContext.sendAsyncPacket(info);
     // not an obvious handling
   }
 }

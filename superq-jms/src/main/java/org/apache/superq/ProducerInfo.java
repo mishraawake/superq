@@ -6,20 +6,22 @@ import java.io.IOException;
 
 public class ProducerInfo extends SerializationSupport{
 
-  private long producerId;
+  private long id;
   private long sessionId;
   private long connectionId;
 
   @Override
   public void serializeFields(DataOutputStream dos) throws IOException {
-    serializeLong(dos, producerId);
+    super.serializeFields(dos);
+    serializeLong(dos, id);
     serializeLong(dos, sessionId);
     serializeLong(dos, connectionId);
   }
 
   @Override
   public void deSerializeFields(DataInputStream dis) throws IOException {
-    producerId = deSerializeLong(dis);
+    super.deSerializeFields(dis);
+    id = deSerializeLong(dis);
     sessionId = deSerializeLong(dis);
     connectionId = deSerializeLong(dis);
   }
@@ -28,12 +30,12 @@ public class ProducerInfo extends SerializationSupport{
     return 2;
   }
 
-  public long getProducerId() {
-    return producerId;
+  public long getId() {
+    return id;
   }
 
-  public void setProducerId(long producerId) {
-    this.producerId = producerId;
+  public void setId(long id) {
+    this.id = id;
   }
 
   public long getSessionId() {

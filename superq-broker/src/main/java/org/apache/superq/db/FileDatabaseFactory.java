@@ -9,6 +9,7 @@ import org.apache.superq.Serialization;
 public interface FileDatabaseFactory<T extends Serialization> {
   FileDatabase<SMQMessage> getOrInitializeMainDatabase(String dbName) throws IOException;
   FileDatabase<T> getInfoDatabase(String dbName, SizeableFactory<T> factory) throws IOException;
+  FileDatabase<T> getInfoDatabase(SizeableFactory<T> factory) throws IOException;
   Map<String, FileDatabaseFactoryImpl.QueueDatabase> getAvailableInfoDbs() throws IOException;
 
   public static class QueueDatabase {

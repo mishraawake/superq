@@ -3,6 +3,7 @@ package org.apache.superq;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.Socket;
+import java.util.concurrent.atomic.AtomicLong;
 import javax.jms.Connection;
 import javax.jms.ConnectionFactory;
 import javax.jms.JMSContext;
@@ -13,6 +14,7 @@ public class SMQConnectionFactory implements ConnectionFactory {
 
   String host;
   int port;
+  AtomicLong connectionId = new AtomicLong(0);
 
   public SMQConnectionFactory(String host, int port){
     this.host = host;
@@ -24,7 +26,8 @@ public class SMQConnectionFactory implements ConnectionFactory {
     try {
       Socket socket = new Socket();
       socket.connect(new InetSocketAddress(this.host, this.port));
-      return new SMQConnection(socket);
+      SMQConnection connection = new SMQConnection(socket, connectionId.incrementAndGet());
+      return connection;
     } catch (IOException ioe){
       JMSException jmse =  new JMSException("Broker host could not be found");
       jmse.setLinkedException(ioe);

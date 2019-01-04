@@ -2,12 +2,15 @@ package org.apache.superq.network;
 
 import java.io.IOException;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Consumer;
 
 import javax.jms.JMSException;
 
 import org.apache.superq.ConsumerInfo;
 import org.apache.superq.SessionInfo;
 import org.apache.superq.incoming.SBProducerContext;
+import org.apache.superq.outgoing.SBConsumer;
 import org.apache.superq.storage.TransactionalStore;
 import org.apache.superq.storage.TransactionalStoreImpl;
 
@@ -15,8 +18,8 @@ public class SessionContext {
 
   private long transactionId = -1;
   private SessionInfo sessionInfo;
-  private Map<Long, SBProducerContext> producers;
-  private Map<Long, ConsumerInfo> consumers;
+  private Map<Long, SBProducerContext> producers = new ConcurrentHashMap<>();
+  private Map<Long, ConsumerInfo> consumers = new ConcurrentHashMap<>();;
   private ConnectionContext connectionContext;
   private TransactionalStore transactionalStore;
 
@@ -65,19 +68,19 @@ public class SessionContext {
   }
 
   public boolean isTransactional() {
-    return transactionId == -1;
+    return transactionId != -1;
   }
 
   public void commitTransaction() throws IOException, JMSException {
+    transactionalStore.commit();
     transactionalStore = null;
     transactionId = -1;
-    transactionalStore.commit();
   }
 
   public void rollbackTransaction() throws IOException, JMSException {
+    transactionalStore.rollback();
     transactionalStore = null;
     transactionId = -1;
-    transactionalStore.rollback();
   }
 
   public void startTransaction(long transactionId){
@@ -88,5 +91,12 @@ public class SessionContext {
 
   public TransactionalStore getCurrentTransaction(){
     return transactionalStore;
+  }
+
+  public void close() throws IOException {
+    producers.clear();
+    for(Map.Entry<Long, ConsumerInfo> consumerInfoEntry : consumers.entrySet()){
+        this.getConnectionContext().getBroker().removeConsumer(consumerInfoEntry.getValue());
+    }
   }
 }

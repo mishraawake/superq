@@ -31,6 +31,7 @@ public class BrokerServer {
 
   public BrokerServer(int port, Broker broker){
     this.broker = broker;
+    this.broker.setAllConnectionContext(allConnectionContext);
     this.port = port;
     try {
       selector = Selector.open();
@@ -73,19 +74,19 @@ public class BrokerServer {
               sc.socket().setKeepAlive(true);
               sc.socket().setReceiveBufferSize(1024 * 1024);
               SelectionKey key = sc.register(selector, SelectionKey.OP_READ);
-              ConnectionContext connectionContext = new ConnectionContext(sc, key, broker);
+              ConnectionContext connectionContext = new ConnectionContext(sc, key, broker, connectionId(sc.socket()));
               allConnectionContext.put(connectionId(sc.socket()), connectionContext);
             }
           }
-          if (next.isReadable()) {
+          if (next.isValid() && next.isReadable()) {
             SocketChannel sc = (SocketChannel) selectableChannel;
             ConnectionContext connectionContext = allConnectionContext.get(connectionId(sc.socket()));
             connectionContext.readRequest();
           }
-          if (next.isWritable()) {
+          if (next.isValid() && next.isWritable()) {
             SocketChannel sc = (SocketChannel) selectableChannel;
             ConnectionContext connectionContext = allConnectionContext.get(connectionId(sc.socket()));
-            connectionContext.readRequest();
+            connectionContext.writeResponse();
           }
         }
       }

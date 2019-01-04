@@ -1,9 +1,10 @@
 package org.apache.superq;
 
-import java.io.IOException;
+import java.io.Closeable;
 import java.io.Serializable;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import javax.jms.BytesMessage;
 import javax.jms.CompletionListener;
@@ -32,24 +33,39 @@ public class SMQSession implements javax.jms.Session {
   SMQConnection connection;
   private long id;
   Map<Long, SMQProducer> producerMap = new HashMap<>();
-  Map<Long, SMQOldConsumer> consumerMap = new HashMap<>();
+  Map<Long, AutoCloseable> consumerMap = new HashMap<>();
   AtomicLong producerIdStore = new AtomicLong(0);
   AtomicLong consumerIdStore = new AtomicLong(0);
   AtomicLong transactioStore = new AtomicLong(0);
-  AtomicLong queueId = new AtomicLong(0);
+  AtomicInteger queueId = new AtomicInteger(0);
   private final int timeout = 5000;
   private Long currentTrId  = null;
 
-  public SMQSession(boolean isTransacted, int acknowledgeMode){
+  public SMQSession(boolean isTransacted, int acknowledgeMode) throws JMSException {
     this.isTransacted = isTransacted;
     this.acknowledgeMode = acknowledgeMode;
   }
 
-  public SMQSession(int sessionMode){
-    this.sessionMode = sessionMode;
+  public void initialize() throws JMSException {
+    sendAsynchronously(createSessionInfo());
+    if(this.connection.isStarted()){
+      this.start();
+    }
   }
 
-  public SMQSession(){
+  private SessionInfo createSessionInfo() {
+    SessionInfo info = new SessionInfo();
+    info.setConnectionId(this.connection.getConnectionId());
+    info.setSessionId(this.getId());
+    return info;
+  }
+
+  public SMQSession(int sessionMode) throws JMSException{
+    this(false, 1);
+  }
+
+  public SMQSession() throws JMSException{
+    this(false, 1);
   }
 
   @Override
@@ -110,6 +126,7 @@ public class SMQSession implements javax.jms.Session {
     // commit all send messages
     CommitTransaction commitTransaction = new CommitTransaction();
     commitTransaction.setTransactionId(currentTrId);
+    commitTransaction.setSessionId(this.getId());
     // commit all consumed messages
     this.connection.sendSync(commitTransaction);
     currentTrId = null;
@@ -117,7 +134,11 @@ public class SMQSession implements javax.jms.Session {
 
   @Override
   public void rollback() throws JMSException {
-    this.connection.sendSync(new RollbackTransaction());
+    RollbackTransaction rollbackTransaction = new RollbackTransaction();
+    rollbackTransaction.setTransactionId(currentTrId);
+    rollbackTransaction.setSessionId(this.getId());
+    this.connection.sendSync(rollbackTransaction);
+    currentTrId = null;
   }
 
   @Override
@@ -151,13 +172,23 @@ public class SMQSession implements javax.jms.Session {
     producer.setDestination(destination);
     long prodducerId = producerIdStore.incrementAndGet();
     producer.setId(prodducerId);
+    ProducerInfo producerInfo = new ProducerInfo();
+    producerInfo.setId(prodducerId);
+    producerInfo.setSessionId(this.getId());
+    producerInfo.setConnectionId(this.getConnection().getConnectionId());
+    sendAsynchronously(producerInfo);
     producerMap.put(prodducerId, producer);
     return producer;
   }
 
   @Override
   public MessageConsumer createConsumer(Destination destination) throws JMSException {
-    return null;
+    SMQOldConsumer consumer = new SMQOldConsumer();
+    consumer.setQueue((QueueInfo) destination);
+    consumer.setSession(this);
+    consumer.setId(consumerIdStore.incrementAndGet());
+    consumerMap.put(consumer.getId(), consumer);
+    return consumer;
   }
 
   @Override
@@ -226,7 +257,13 @@ public class SMQSession implements javax.jms.Session {
 
   @Override
   public QueueBrowser createBrowser(Queue queue) throws JMSException {
-    return null;
+    SQQueueBrowser queueBrowser = new SQQueueBrowser();
+    queueBrowser.setId(consumerIdStore.incrementAndGet());
+    queueBrowser.setQueue(queue);
+    queueBrowser.setSession(this);
+    queueBrowser.start();
+    consumerMap.putIfAbsent(queueBrowser.getId(), queueBrowser);
+    return queueBrowser;
   }
 
   @Override
@@ -259,12 +296,14 @@ public class SMQSession implements javax.jms.Session {
 
   private void beginTransaction() throws JMSException {
     StartTransaction startTransaction = new StartTransaction();
-    startTransaction.setTransactionId(transactioStore.incrementAndGet());
-    this.connection.sendAsync(new StartTransaction());
+    currentTrId = transactioStore.incrementAndGet();
+    startTransaction.setTransactionId(currentTrId);
+    startTransaction.setSessionId(this.getId());
+    this.connection.sendAsync(startTransaction);
   }
 
   public void sendMessage(SMQMessage message) throws JMSException {
-    if(isTransacted){
+    if(isTransacted && currentTrId == null){
       beginTransaction();
     }
     message.setSessionId(this.getId());
@@ -280,11 +319,31 @@ public class SMQSession implements javax.jms.Session {
     this.connection.sendAsync(message);
   }
 
+  private void sendAsynchronously(Serialization serialization) throws JMSException {
+    this.connection.sendAsync(serialization);
+  }
+
+  public SMQConnection getConnection() {
+    return connection;
+  }
+
+  public void setConnection(SMQConnection connection) {
+    this.connection = connection;
+  }
+
   public SMQProducer getProducer(long producerId) {
     return producerMap.get(producerId);
   }
 
-  public SMQOldConsumer getConsumer(long consumerId){
+  public AutoCloseable getConsumer(long consumerId){
     return consumerMap.get(consumerId);
+  }
+
+  public void start() {
+
+  }
+
+  public void stop() {
+
   }
 }

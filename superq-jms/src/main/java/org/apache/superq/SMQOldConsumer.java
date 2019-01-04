@@ -8,6 +8,22 @@ import javax.jms.MessageListener;
 public class SMQOldConsumer implements MessageConsumer {
 
   MessageListener messageListener;
+  SMQSession session;
+  long id;
+  QueueInfo queue;
+
+  public SMQOldConsumer(){
+
+  }
+
+  public void start() throws JMSException {
+    ConsumerInfo info = new ConsumerInfo();
+    info.setConnectionId(this.session.getConnection().getConnectionId());
+    info.setSessionId(this.session.getId());
+    info.setId(this.id);
+    info.setQid(((SMQDestination)this.queue).getDestinationId());
+    this.session.connection.sendAsync(info);
+  }
 
   @Override
   public String getMessageSelector() throws JMSException {
@@ -21,7 +37,8 @@ public class SMQOldConsumer implements MessageConsumer {
 
   @Override
   public void setMessageListener(MessageListener listener) throws JMSException {
-    this.messageListener = messageListener;
+    this.messageListener = listener;
+    this.start();
   }
 
   @Override
@@ -42,5 +59,29 @@ public class SMQOldConsumer implements MessageConsumer {
   @Override
   public void close() throws JMSException {
 
+  }
+
+  public SMQSession getSession() {
+    return session;
+  }
+
+  public void setSession(SMQSession session) {
+    this.session = session;
+  }
+
+  public long getId() {
+    return id;
+  }
+
+  public void setId(long id) {
+    this.id = id;
+  }
+
+  public QueueInfo getQueue() {
+    return queue;
+  }
+
+  public void setQueue(QueueInfo queue) {
+    this.queue = queue;
   }
 }

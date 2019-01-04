@@ -51,10 +51,6 @@ public class TransactionalStoreImpl implements TransactionalStore {
     throw new NotImplementedException();
   }
 
-  @Override
-  public boolean hasMoreMessage() {
-     throw new NotImplementedException();
-  }
 
   @Override
   public void addMessage(SMQMessage smqMessage) throws IOException {

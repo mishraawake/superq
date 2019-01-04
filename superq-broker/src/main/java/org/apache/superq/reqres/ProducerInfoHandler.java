@@ -1,13 +1,12 @@
 package org.apache.superq.reqres;
 
 import org.apache.superq.ProducerInfo;
-import org.apache.superq.Serialization;
-import org.apache.superq.incoming.SBProducer;
 import org.apache.superq.incoming.SBProducerContext;
 import org.apache.superq.network.ConnectionContext;
 import org.apache.superq.network.SessionContext;
 
 public class ProducerInfoHandler implements RequestHandler<ProducerInfo> {
+
   @Override
   public void handle(ProducerInfo info, ConnectionContext connectionContext) {
     if(connectionContext.getInfo().getConnectionId() != info.getConnectionId()){
@@ -20,11 +19,13 @@ public class ProducerInfoHandler implements RequestHandler<ProducerInfo> {
     SessionContext sqSession = connectionContext.getSession(info.getSessionId());
 
     if(sqSession == null){
-      throw new IllegalStateException("No session for the producer connectionId "+info.getProducerId());
+      throw new IllegalStateException("No session for the producer connectionId "+info.getId());
     }
 
-    if(sqSession.getProducers().putIfAbsent(info.getProducerId(), new SBProducerContext(info) ) != null){
-       // duplicate
+    SBProducerContext sbProducerContext = new SBProducerContext(info);
+    sbProducerContext.setSessionContext(sqSession);
+    if(sqSession.getProducers().putIfAbsent(info.getId(), sbProducerContext) != null){
+      // handle duplicate
     }
   }
 }

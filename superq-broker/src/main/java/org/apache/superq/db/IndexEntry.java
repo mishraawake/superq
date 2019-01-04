@@ -1,5 +1,6 @@
 package org.apache.superq.db;
 
+import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
@@ -30,17 +31,28 @@ public class IndexEntry extends SerializationSupport {
     this.messageLength = messageLength;
   }
 
+  protected void initializeBytes() throws IOException {
+    if(bytes == null) {
+      ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
+      DataOutputStream dos = new DataOutputStream(byteArrayOutputStream);
+      serializeFields(dos);
+      bytes = byteArrayOutputStream.toByteArray();
+      //fillField(bytes);
+    }
+  }
 
   @Override
   public void serializeFields(DataOutputStream dos) throws IOException {
-    serializeLong(dos, messageLocation);
-    serializeInt(dos, messageLength);
+    //super.serializeFields(dos);
+    doSerializeLong(dos, messageLocation);
+    doSerializeInteger(dos, messageLength);
   }
 
   @Override
   public void deSerializeFields(DataInputStream dis) throws IOException {
-    messageLocation = deSerializeLong(dis);
-    messageLength = deSerializeInteger(dis);
+   // super.deSerializeFields(dis);
+    messageLocation = doGetLong(dis);
+    messageLength = doGetInteger(dis);
   }
 
   @Override

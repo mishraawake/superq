@@ -3,6 +3,7 @@ package org.apache.superq;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
+import java.util.Objects;
 import javax.jms.JMSException;
 import javax.jms.TextMessage;
 
@@ -27,13 +28,38 @@ public class SMQTextMessage extends SMQMessage implements TextMessage {
 
   @Override
   public void serializeFields(DataOutputStream dos) throws IOException {
-    serializeIntString(dos, content);
     super.serializeFields(dos);
+    serializeIntString(dos, content);
   }
 
   @Override
   public void deSerializeFields(DataInputStream dis) throws IOException {
-    content =  deserializeIntString(dis);
     super.deSerializeFields(dis);
+    content =  deserializeIntString(dis);
+  }
+
+  @Override
+  public String toString() {
+    return "SMQTextMessage{" +
+            "content='" + content + '\'' +
+            super.toString() +
+            '}';
+  }
+
+  @Override
+  public boolean equals(Object o) {
+    if (this == o)
+      return true;
+    if (o == null || getClass() != o.getClass())
+      return false;
+    if (!super.equals(o))
+      return false;
+    SMQTextMessage that = (SMQTextMessage) o;
+    return Objects.equals(content, that.content);
+  }
+
+  @Override
+  public int hashCode() {
+    return Objects.hash(super.hashCode(), content);
   }
 }

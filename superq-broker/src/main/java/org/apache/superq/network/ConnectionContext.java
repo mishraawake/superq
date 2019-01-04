@@ -4,6 +4,7 @@ package org.apache.superq.network;
 import java.io.IOException;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.SocketChannel;
+import java.util.Iterator;
 import java.util.Map;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentHashMap;
@@ -25,21 +26,26 @@ public class ConnectionContext {
 
   SocketChannel sc;
   SelectionKey key;
-  AtomicLong totalResponse;
+  AtomicLong totalResponse = new AtomicLong(0);
   ConnectionInfo info;
-  PartialRequest pr;
+  PartialRequest pr = new PartialRequest();
   Broker broker;
+  String id;
 
-  public ConnectionContext(SocketChannel sc, SelectionKey key, Broker broker){
+  public ConnectionContext(SocketChannel sc, SelectionKey key, Broker broker, String id){
     this.sc = sc;
     this.key = key;
     this.broker = broker;
+    this.id = id;
   }
 
   // will be executed by callback thread
   public synchronized void sendAsyncPacket(Serialization serialization){
     queuedUpResponses.add(new ResponsePartial(serialization));
-    key.interestOps(SelectionKey.OP_WRITE | SelectionKey.OP_READ);
+    if(key.isValid()) {
+      key.interestOps(SelectionKey.OP_WRITE | SelectionKey.OP_READ);
+      key.selector().wakeup();
+    }
   }
 
   // will be executed by request/response thread.
@@ -49,7 +55,12 @@ public class ConnectionContext {
       try {
         pr.tryComplete(sc);
       } catch (IOException ioe){
-        closeConnection();
+        try {
+          closeConnection();
+        }
+        catch (IOException e) {
+          e.printStackTrace();
+        }
       }
       if (pr.complete()) {
         completeResponse();
@@ -60,7 +71,7 @@ public class ConnectionContext {
   private synchronized void completeResponse() {
     totalResponse.incrementAndGet();
     queuedUpResponses.poll();
-    if(queuedUpResponses.isEmpty()){
+    if(key.isValid() && queuedUpResponses.isEmpty()){
       key.interestOps(SelectionKey.OP_READ);
     }
   }
@@ -76,13 +87,27 @@ public class ConnectionContext {
           pr = new PartialRequest();
         }
       } catch (IOException io){
-        closeConnection();
+        try {
+          closeConnection();
+        }
+        catch (IOException e) {
+          e.printStackTrace();
+        }
       }
     }
   }
 
-  private void closeConnection(){
-
+  private void closeConnection() throws IOException {
+    queuedUpResponses.clear();
+    Iterator<Long> keyIterator = sessions.keySet().iterator();
+    while (keyIterator.hasNext()) {
+      Long next = keyIterator.next();
+      sessions.get(next).close();
+    }
+    this.broker.removeConnection(this.id);
+    if(this.key.isValid())
+      this.key.cancel();
+    this.sc.close();
   }
 
   public void setInfo(ConnectionInfo info){
@@ -105,7 +130,10 @@ public class ConnectionContext {
     return sessions.get(sessionId);
   }
 
-  public void registerSession(SessionInfo sessionInfo){
-    sessions.putIfAbsent(sessionInfo.getSessionId(), new SessionContext(sessionInfo));
+  public SessionContext registerSession(SessionInfo sessionInfo){
+    SessionContext sessionContext = new SessionContext(sessionInfo);
+    sessionContext.setConnectionContext(this);
+    sessions.putIfAbsent(sessionInfo.getSessionId(), sessionContext);
+    return sessionContext;
   }
 }

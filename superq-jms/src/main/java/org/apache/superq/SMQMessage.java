@@ -10,6 +10,7 @@ import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Vector;
 import javax.jms.DeliveryMode;
 import javax.jms.Destination;
@@ -20,24 +21,24 @@ public abstract class SMQMessage extends SerializationSupport implements Message
 
   private String jmsMessageId;
   private Long jmsMessageLongId;
-  private long jmsTimestamp;
+  private Long jmsTimestamp;
   private String jmsCorrelationID;
   private Destination jmsReplyTo;
   private Destination jmsDestination;
-  private int destinationId;
-  private int replytoDestinationId;
-  private int jmsDeliveryMode;
+  private Integer destinationId;
+  private Integer replytoDestinationId;
+  private Byte jmsDeliveryMode;
   private boolean jmsRedelivered;
   private String jmsType;
-  private long jmsExpiration;
-  private long jmsDeliveryTime;
-  private int jmsPriority;
+  private Long jmsExpiration;
+  private Long jmsDeliveryTime;
+  private Integer jmsPriority;
   private long producerId;
   private long consumerId;
   private long sessionId;
   private long connectionId;
   private boolean responseRequire;
-  Map<String, Object> properties;
+  Map<String, Object> properties = new HashMap<>();
   private final String GROUP_HEADER_NAME = "JMSXGroupID";
   private final String GROUP_SEQ_HEADER_NAME = "JMSXGroupSeq";
   private transient long transactionId;
@@ -110,7 +111,7 @@ public abstract class SMQMessage extends SerializationSupport implements Message
 
   @Override
   public void setJMSDeliveryMode(int deliveryMode) throws JMSException {
-    this.jmsDeliveryMode = deliveryMode;
+    this.jmsDeliveryMode = (byte)deliveryMode;
   }
 
   @Override
@@ -309,13 +310,6 @@ public abstract class SMQMessage extends SerializationSupport implements Message
     this.connectionId = connectionId;
   }
 
-  public String getJmsMessageId() {
-    return jmsMessageId;
-  }
-
-  public void setJmsMessageId(String jmsMessageId) {
-    this.jmsMessageId = jmsMessageId;
-  }
 
   public Long getJmsMessageLongId() {
     return jmsMessageLongId;
@@ -333,7 +327,7 @@ public abstract class SMQMessage extends SerializationSupport implements Message
     properties.put(GROUP_HEADER_NAME, groupId);
   }
 
-  public int getGroupSeqId(){
+  public Integer getGroupSeqId(){
     return (Integer) properties.get(GROUP_SEQ_HEADER_NAME);
   }
 
@@ -382,35 +376,53 @@ public abstract class SMQMessage extends SerializationSupport implements Message
 
 
   public void serializeFields(DataOutputStream dos) throws IOException{
+    super.serializeFields(dos);
     serializeLong(dos, jmsMessageLongId);
-    serializeLong(dos, jmsTimestamp == 0 ?  null : jmsTimestamp);
+    serializeLong(dos, jmsTimestamp );
     serializeByteString(dos, jmsCorrelationID);
-    destinationId = ((SMQDestination)jmsDestination).getDestinationId();
-    replytoDestinationId = ((SMQDestination)jmsReplyTo).getDestinationId();
-    serializeInt(dos, destinationId == 0 ? null : destinationId);
-    serializeInt(dos, replytoDestinationId == 0 ? null :replytoDestinationId);
-    serializeByte(dos, (byte)jmsDeliveryMode);
-    serializeByte(dos, jmsRedelivered ? (byte)1:(byte)0);
+    if(jmsDestination != null)
+      destinationId = ((SMQDestination)jmsDestination).getDestinationId();
+    if(jmsReplyTo != null)
+      replytoDestinationId = ((SMQDestination)jmsReplyTo).getDestinationId();
+    serializeInt(dos, destinationId );
+    serializeInt(dos, replytoDestinationId );
+    serializeByte(dos, jmsDeliveryMode);
+    serializeBoolean(dos, jmsRedelivered);
     serializeShortString(dos, jmsType);
-    serializeLong(dos, jmsExpiration == 0 ? null: jmsExpiration);
-    serializeLong(dos, jmsDeliveryTime == 0 ? null: jmsDeliveryTime);
-    serializeLong(dos, producerId == 0 ? null : producerId);
-    serializeLong(dos, consumerId == 0 ? null : consumerId);
+    serializeLong(dos, jmsExpiration);
+    serializeLong(dos, jmsDeliveryTime );
+    serializeLong(dos, producerId );
+    serializeLong(dos, consumerId);
     serializeLong(dos, sessionId);
     serializeLong(dos, connectionId);
     serializeBoolean(dos, responseRequire);
-    byte priority = (byte)jmsPriority;
-    serializeByte(dos, priority == 0 ? null: priority);
+    if(jmsPriority != null){
+      byte priority = jmsPriority.byteValue();
+      serializeByte(dos, priority == 0 ? null: priority);
+    } else {
+      serializeByte(dos, null);
+    }
     serializeMap(dos, (HashMap<String, Object>) properties);
   }
   public void deSerializeFields(DataInputStream dis) throws IOException{
+    super.deSerializeFields(dis);
     jmsMessageLongId = deSerializeLong(dis);
     jmsTimestamp = deSerializeLong(dis);
     jmsCorrelationID = deserializeByteString(dis);
     destinationId = deSerializeInteger(dis);
+    if(destinationId != null){
+      QueueInfo queueInfo = new QueueInfo();
+      queueInfo.setId(destinationId);
+      jmsDestination = queueInfo;
+    }
     replytoDestinationId = deSerializeInteger(dis);
+    if(replytoDestinationId != null){
+      QueueInfo queueInfo = new QueueInfo();
+      queueInfo.setId(replytoDestinationId);
+      jmsReplyTo = queueInfo;
+    }
     jmsDeliveryMode = deserializeByte(dis);
-    jmsRedelivered = deserializeByte(dis) == 1 ? true:false;
+    jmsRedelivered = deSerializeBoolean(dis);
     jmsType = deserializeByteString(dis);
     jmsExpiration = deSerializeLong(dis);
     jmsDeliveryTime = deSerializeLong(dis);
@@ -419,11 +431,77 @@ public abstract class SMQMessage extends SerializationSupport implements Message
     sessionId = deSerializeLong(dis);
     connectionId = deSerializeLong(dis);
     responseRequire = deSerializeBoolean(dis);
-    jmsPriority = deserializeByte(dis);
+    Byte priorityByte = deserializeByte(dis);
+    if(priorityByte != null)
+      jmsPriority = priorityByte.intValue();
     properties = deserializeMap(dis);
   }
 
   public boolean isPersistent() {
     return jmsDeliveryMode == DeliveryMode.PERSISTENT;
+  }
+
+  public int getFieldsSize(){
+    return 3*8;
+  }
+
+  @Override
+  public boolean equals(Object o) {
+    if (this == o)
+      return true;
+    if (o == null || getClass() != o.getClass())
+      return false;
+    SMQMessage message = (SMQMessage) o;
+    return jmsRedelivered == message.jmsRedelivered &&
+            producerId == message.producerId &&
+            consumerId == message.consumerId &&
+            sessionId == message.sessionId &&
+            connectionId == message.connectionId &&
+            responseRequire == message.responseRequire &&
+            transactionId == message.transactionId &&
+            Objects.equals(jmsMessageId, message.jmsMessageId) &&
+            Objects.equals(jmsMessageLongId, message.jmsMessageLongId) &&
+            Objects.equals(jmsTimestamp, message.jmsTimestamp) &&
+            Objects.equals(jmsCorrelationID, message.jmsCorrelationID) &&
+            Objects.equals(destinationId, message.destinationId) &&
+            Objects.equals(replytoDestinationId, message.replytoDestinationId) &&
+            Objects.equals(jmsDeliveryMode, message.jmsDeliveryMode) &&
+            Objects.equals(jmsType, message.jmsType) &&
+            Objects.equals(jmsExpiration, message.jmsExpiration) &&
+            Objects.equals(jmsDeliveryTime, message.jmsDeliveryTime) &&
+            Objects.equals(jmsPriority, message.jmsPriority) &&
+            Objects.equals(properties, message.properties) &&
+            Objects.equals(GROUP_HEADER_NAME, message.GROUP_HEADER_NAME) &&
+            Objects.equals(GROUP_SEQ_HEADER_NAME, message.GROUP_SEQ_HEADER_NAME);
+  }
+
+  @Override
+  public int hashCode() {
+    return Objects.hash(jmsMessageId, jmsMessageLongId, jmsTimestamp, jmsCorrelationID, destinationId, replytoDestinationId, jmsDeliveryMode, jmsRedelivered, jmsType, jmsExpiration, jmsDeliveryTime, jmsPriority, producerId, consumerId, sessionId, connectionId, responseRequire, properties, GROUP_HEADER_NAME, GROUP_SEQ_HEADER_NAME, transactionId);
+  }
+
+  @Override
+  public String toString() {
+    return " jmsMessageId='" + jmsMessageId + '\'' +
+            ", jmsMessageLongId=" + jmsMessageLongId +
+            ", jmsTimestamp=" + jmsTimestamp +
+            ", jmsCorrelationID='" + jmsCorrelationID + '\'' +
+            ", jmsReplyTo=" + jmsReplyTo +
+            ", jmsDestination=" + jmsDestination +
+            ", destinationId=" + destinationId +
+            ", replytoDestinationId=" + replytoDestinationId +
+            ", jmsDeliveryMode=" + jmsDeliveryMode +
+            ", jmsRedelivered=" + jmsRedelivered +
+            ", jmsType='" + jmsType + '\'' +
+            ", jmsExpiration=" + jmsExpiration +
+            ", jmsDeliveryTime=" + jmsDeliveryTime +
+            ", jmsPriority=" + jmsPriority +
+            ", producerId=" + producerId +
+            ", consumerId=" + consumerId +
+            ", sessionId=" + sessionId +
+            ", connectionId=" + connectionId +
+            ", responseRequire=" + responseRequire +
+            ", properties=" + properties +
+            ", transactionId=" + transactionId;
   }
 }

@@ -9,7 +9,7 @@ public class Logger {
   }
 
   public void errorLog(String log, Object ... params){
-    System.out.println();
+
   }
 
   public void fatalLog(String log, Object ... params){
@@ -17,7 +17,7 @@ public class Logger {
   }
 
   public void warnLog(String log, Object ... params){
-
+    System.out.println(log);
   }
 
   public void infoLog(String log, Object ... params){

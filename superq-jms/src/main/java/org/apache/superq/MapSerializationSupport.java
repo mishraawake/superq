@@ -51,7 +51,7 @@ public class MapSerializationSupport {
   }
 
   public static Map<String, Object> unmarshalPrimitiveMap(DataInputStream in, int maxPropertySize) throws IOException {
-    return unmarshalPrimitiveMap(in, maxPropertySize, false);
+    return unmarshalPrimitiveMap(in, maxPropertySize, true);
   }
 
   /**
@@ -85,7 +85,7 @@ public class MapSerializationSupport {
   }
 
   public static List<Object> unmarshalPrimitiveList(DataInputStream in) throws IOException {
-    return unmarshalPrimitiveList(in, false);
+    return unmarshalPrimitiveList(in, true);
   }
 
   public static List<Object> unmarshalPrimitiveList(DataInputStream in, boolean force) throws IOException {
@@ -132,7 +132,7 @@ public class MapSerializationSupport {
   }
 
   public static Object unmarshalPrimitive(DataInputStream in) throws IOException {
-    return unmarshalPrimitive(in, false);
+    return unmarshalPrimitive(in, true);
   }
 
   public static Object unmarshalPrimitive(DataInputStream in, boolean force) throws IOException {

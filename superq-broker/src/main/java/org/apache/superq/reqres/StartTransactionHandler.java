@@ -6,6 +6,9 @@ import org.apache.superq.network.SessionContext;
 
 public class StartTransactionHandler implements RequestHandler<StartTransaction> {
 
+  public StartTransactionHandler(){
+
+  }
   @Override
   public void handle(StartTransaction startTransaction, ConnectionContext connectionContext) {
     SessionContext sessionContext = connectionContext.getSession(startTransaction.getSessionId());

@@ -1,18 +1,23 @@
 package org.apache.superq;
 
+import java.io.Closeable;
 import java.io.DataInputStream;
 import java.io.IOException;
 import java.net.Socket;
+import java.nio.ByteBuffer;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentSkipListSet;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import javax.jms.ConnectionConsumer;
 import javax.jms.ConnectionMetaData;
 import javax.jms.Destination;
 import javax.jms.ExceptionListener;
 import javax.jms.JMSException;
+import javax.jms.MessageConsumer;
+import javax.jms.QueueBrowser;
 import javax.jms.ServerSessionPool;
 import javax.jms.Session;
 import javax.jms.Topic;
@@ -24,7 +29,7 @@ public class SMQConnection implements javax.jms.Connection {
 
   Logger logger = LoggerFactory.getLogger(SMQConnection.class);
 
-  private String connectionId;
+  private long connectionId;
   private String clientId;
   ConnectionMetaData connectionMetaData;
   ExceptionListener exceptionListener;
@@ -33,14 +38,26 @@ public class SMQConnection implements javax.jms.Connection {
   WiredObjectFactory partialRequestFactory = new ConstArrayWiredObjectFactory();
   Socket socket;
   Thread receiver;
+  private AtomicBoolean started = new AtomicBoolean(false);
   Set<Long> messagesAckAwaited = new ConcurrentSkipListSet<>();
   Set<Long> correlatedsAckAwaited = new ConcurrentSkipListSet<>();
   Object sendAwait = new Object();
   Map<Long, SMQSession> sessionMap = new ConcurrentHashMap<>();
   private final int defaultTimeout = 5000;
 
-  public SMQConnection(Socket socket){
+  public SMQConnection(Socket socket, long connectionId) throws JMSException {
     this.socket = socket;
+    this.connectionId = connectionId;
+    Thread thread = new Thread(new Receiver());
+    thread.start();
+    sendConnectionInfo();
+  }
+
+  private void sendConnectionInfo() throws JMSException {
+    ConnectionInfo connectionInfo = new ConnectionInfo();
+    connectionInfo.setConnectionId(getConnectionId());
+    connectionInfo.setPacketId(correlatedIdStore.incrementAndGet());
+    sendSync(connectionInfo);
   }
 
   public void sendSync(SMQMessage message, int timeout) throws JMSException {
@@ -50,7 +67,9 @@ public class SMQConnection implements javax.jms.Connection {
       long stime = System.currentTimeMillis();
       while (messagesAckAwaited.contains(Long.valueOf(message.getJMSMessageID()))) {
         try {
-          sendAwait.wait(timeout);
+          synchronized (sendAwait) {
+            sendAwait.wait(timeout);
+          }
         }
         catch (InterruptedException e) {
         }
@@ -68,7 +87,9 @@ public class SMQConnection implements javax.jms.Connection {
       long stime = System.currentTimeMillis();
       while (correlatedsAckAwaited.contains(Long.valueOf(packet.getPacketId()))) {
         try {
-          sendAwait.wait(timeout);
+          synchronized (sendAwait) {
+            sendAwait.wait(timeout);
+          }
         }
         catch (InterruptedException e) {
         }
@@ -89,10 +110,12 @@ public class SMQConnection implements javax.jms.Connection {
     return assignIdAndStore(session);
   }
 
-  private SMQSession assignIdAndStore(SMQSession session){
+  private SMQSession assignIdAndStore(SMQSession session) throws JMSException {
     long sessionId = sessionIdStore.incrementAndGet();
     session.setId(sessionId);
+    session.setConnection(this);
     sessionMap.put(sessionId, session);
+    session.initialize();
     return session;
   }
 
@@ -104,7 +127,7 @@ public class SMQConnection implements javax.jms.Connection {
 
   @Override
   public Session createSession() throws JMSException {
-    SMQSession session = new SMQSession();
+    SMQSession session = new SMQSession(false, 1);
     return assignIdAndStore(session);
   }
 
@@ -135,17 +158,30 @@ public class SMQConnection implements javax.jms.Connection {
 
   @Override
   public void start() throws JMSException {
-
+    if(!started.compareAndSet(false, true)){
+      for(Map.Entry<Long, SMQSession> sessionEntry : sessionMap.entrySet()){
+        sessionEntry.getValue().start();
+      }
+    }
   }
 
   @Override
   public void stop() throws JMSException {
-
+    if(!started.compareAndSet(true, false)){
+      for(Map.Entry<Long, SMQSession> sessionEntry : sessionMap.entrySet()){
+        sessionEntry.getValue().stop();
+      }
+    }
   }
 
   @Override
   public void close() throws JMSException {
-
+    try {
+      socket.close();
+    }
+    catch (IOException e) {
+      handleIOException(e);
+    }
   }
 
   @Override
@@ -196,15 +232,23 @@ public class SMQConnection implements javax.jms.Connection {
   }
 
   private void writeSerialization(Serialization packet) throws IOException{
-    socket.getOutputStream ().write(packet.getSize());
-    socket.getOutputStream ().write(packet.getType());
+    ByteBuffer bb = ByteBuffer.allocate(6);
+    bb.putInt(packet.getSize());
+    bb.putShort(packet.getType());
+    bb.flip();
+    socket.getOutputStream ().write(bb.array());
     socket.getOutputStream ().write(packet.getBuffer());
+  }
+
+  public boolean isStarted() {
+    return started.get();
   }
 
   class Receiver implements Runnable {
 
     @Override
     public void run() {
+      System.out.println("Receiver thread started");
       while (true){
         Object packet = null;
         try {
@@ -223,21 +267,24 @@ public class SMQConnection implements javax.jms.Connection {
           ProduceAck pack = (ProduceAck)packet;
           SMQProducer producer = SMQConnection.this.getSession(pack.getSessionId()).getProducer(pack.getProducerId());
           AsyncProduceData asyncProduceData = producer.getMessageHandler(pack.getMessageId());
-          if(producer != null &&  asyncProduceData == null){
+          if(asyncProduceData == null){
             producer.decrementInFlightMessage();
             SMQConnection.this.messagesAckAwaited.remove(pack.getMessageId());
-            sendAwait.notifyAll();
-          } else if(producer != null){
+            synchronized (sendAwait) {
+              sendAwait.notifyAll();
+            }
+          } else{
             asyncProduceData.getCompletionListener().onCompletion(asyncProduceData.getMessage());
           }
         } else if(packet instanceof SMQMessage){
           handleConsumerMessage((SMQMessage) packet);
-
         } else if(packet instanceof CorrelatedPacket){
           CorrelatedPacket correlatedPacket = (CorrelatedPacket)packet;
           correlatedPacket.getPacketId();
           SMQConnection.this.correlatedsAckAwaited.remove(correlatedPacket.getPacketId());
-          sendAwait.notifyAll();
+          synchronized (sendAwait) {
+            sendAwait.notifyAll();
+          }
         }
       }
     }
@@ -246,27 +293,44 @@ public class SMQConnection implements javax.jms.Connection {
   private void handleConsumerMessage(SMQMessage packet) {
     SMQMessage message = packet;
     SMQSession session = SMQConnection.this.getSession(message.getSessionId());
-    SMQOldConsumer mc = session.getConsumer(message.getConsumerId());
-    try {
-      mc.getMessageListener().onMessage(message);
-    } catch (JMSException e){
-
-    }
-    try {
-      if (session.getAcknowledgeMode() == Session.AUTO_ACKNOWLEDGE) {
-        ConsumerAck consumerAck = new ConsumerAck();
-        //sendPacket(consumerAck);
-      }
-      else if (session.getAcknowledgeMode() == Session.DUPS_OK_ACKNOWLEDGE) {
+    AutoCloseable mc = session.getConsumer(message.getConsumerId());
+    if(mc instanceof MessageConsumer){
+      SMQOldConsumer consumer = (SMQOldConsumer)mc;
+      try {
+        consumer.getMessageListener().onMessage(message);
+      } catch (JMSException e){
 
       }
-    } catch (JMSException e){
-
+      try {
+        if(session.getTransacted()){
+          // do nothing
+        }else if (session.getAcknowledgeMode() == Session.AUTO_ACKNOWLEDGE || session.getAcknowledgeMode() == Session.DUPS_OK_ACKNOWLEDGE) {
+          ConsumerAck consumerAck = new ConsumerAck();
+          consumerAck.setMessageId(message.getJmsMessageLongId());
+          consumerAck.setConnectionId(this.getConnectionId());
+          consumerAck.setSessionId(session.getId());
+          consumerAck.setQid(consumer.getQueue().getId());
+          consumerAck.setId(message.getConsumerId());
+          sendAsync(consumerAck);
+        }
+      } catch (JMSException e){
+      }
+    } else {
+      SQQueueBrowser consumer = (SQQueueBrowser)mc;
+      consumer.consumer(packet);
     }
   }
 
   private Serialization getNextPacket(Socket socket) throws IOException {
     DataInputStream dis = new DataInputStream(socket.getInputStream());
     return partialRequestFactory.getObject(dis);
+  }
+
+  public long getConnectionId() {
+    return connectionId;
+  }
+
+  public void setConnectionId(long connectionId) {
+    this.connectionId = connectionId;
   }
 }

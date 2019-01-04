@@ -1,33 +1,41 @@
 package org.apache.superq.storage;
 
 import java.io.IOException;
+import java.util.LinkedList;
 import java.util.List;
+import java.util.PriorityQueue;
+import java.util.Queue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
 import javax.jms.JMSException;
 
 import org.apache.superq.Broker;
+import org.apache.superq.BrowserInfo;
+import org.apache.superq.ConsumerAck;
 import org.apache.superq.ConsumerInfo;
 import org.apache.superq.ProduceAck;
 import org.apache.superq.QueueInfo;
 import org.apache.superq.SMQMessage;
 import org.apache.superq.Task;
+import org.apache.superq.db.FileDatabase;
+import org.apache.superq.db.FileDatabaseFactoryImpl;
 import org.apache.superq.incoming.SBProducerContext;
 import org.apache.superq.log.Logger;
 import org.apache.superq.log.LoggerFactory;
+import org.apache.superq.network.SessionContext;
 import org.apache.superq.outgoing.SBConsumer;
 
 public class SBQueueDefault implements SBQueue<SMQMessage> {
 
   Logger logger = LoggerFactory.getLogger(SBQueueDefault.class);
-
   MessageSupplier messageSupplier;
-
   MessageStore store;
-
   Broker broker;
-
+  ConcurrentMap<String, ConsumerInfo> consumerMap = new ConcurrentHashMap<>();
+  ConcurrentMap<Long, SBConsumer<SMQMessage>> consumerIdToConsumer = new ConcurrentHashMap<>();
+  Queue<SBConsumer<SMQMessage>> consumerQueue = new LinkedList<>();
+  SMQMessage waitingToDispatch = null;
 
   TransactionSync afterTransactiondispatch = new TransactionSync() {
     @Override
@@ -41,13 +49,12 @@ public class SBQueueDefault implements SBQueue<SMQMessage> {
     }
   };
 
-  public SBQueueDefault(Broker broker, QueueInfo info, TransactionalStore transactionalStore) throws IOException, JMSException {
+  public SBQueueDefault(Broker broker, QueueInfo info, FileDatabase<SMQMessage> fileDatabase) throws IOException, JMSException {
     this.broker = broker;
-    store = new MessageStoreImpl(info.getQueueName());
+    store = new IOMessageStoreFilter(new MessageStoreImpl(info.getQueueName(), fileDatabase), broker);
     messageSupplier = new RamMessageSupplier(store, info.getQueueName());
   }
 
-  ConcurrentMap<String, ConsumerInfo> consumerMap = new ConcurrentHashMap<>();
 
   @Override
   public void acceptMessage(SMQMessage message, SBProducerContext producerContext) throws IOException {
@@ -106,13 +113,34 @@ public class SBQueueDefault implements SBQueue<SMQMessage> {
   }
 
   @Override
-  public void acceptConsumer(SBConsumer<SMQMessage> consumer) {
+  public void acceptConsumer(SBConsumer<SMQMessage> consumer) throws IOException {
+    consumerQueue.add(consumer);
+    consumer.start();
+    consumerIdToConsumer.putIfAbsent(consumer.getConsumerInfo().getId(), consumer);
+    dispatchProcess();
     // add to the list of consumers
     // it will only do anything if it has been started successfully.
     // It will add the consumers, prepare it and then start a process of dispatching the
     // message
     // the dispatch method now has to notify that a new consumer is prepared to take up the message.
 
+  }
+
+  @Override
+  public void removeConsumer(Long consumerId) throws IOException {
+    SBConsumer consumer = consumerIdToConsumer.remove(consumerId);
+    consumerQueue.remove(consumer);
+  }
+
+  @Override
+  public void acceptBrowser(BrowserInfo browserInfo, SessionContext sessionContext) throws IOException {
+    MessageEnumerator messageEnumerator = store.browserEnumerator();
+    while(messageEnumerator.hasMoreElements()){
+      SMQMessage message = messageEnumerator.nextElement();
+      message.setConsumerId(browserInfo.getId());
+      message.setSessionId(sessionContext.getSessionInfo().getSessionId());
+      sessionContext.getConnectionContext().sendAsyncPacket(message);
+    }
   }
 
   @Override
@@ -153,7 +181,10 @@ public class SBQueueDefault implements SBQueue<SMQMessage> {
   }
 
   @Override
-  public void ackMessage(SMQMessage message) {
+  public void ackMessage(ConsumerAck consumerAck) throws IOException {
+    consumerIdToConsumer.get(consumerAck.getId()).ack(consumerAck.getMessageId());
+    store.removeMessage(consumerAck.getMessageId());
+    dispatchProcess();
     // ack message in doing so delete the message from the queue knowledge and also notify this event
     // the dispatching process would be interested into this event because it might have been stalled
     // because of limit of unack messages.
@@ -204,9 +235,11 @@ public class SBQueueDefault implements SBQueue<SMQMessage> {
     // get the message one by one
     // hand it over to consumer in round robin fashion or based on group id hand it over to only one consumer.
     // put all handover message to the ack list.
-
-    while(messageSupplier.hasMoreMessage()) {
-      SMQMessage message = getMessage();
+    if(consumerQueue.size() == 0){
+      return;
+    }
+    while(waitingToDispatch != null || store.hasMoreMessage()) {
+      SMQMessage message = waitingToDispatch != null ? waitingToDispatch : store.getNextMessage();
       SBConsumer<SMQMessage> consumer = getNextConsumer(), fistConsumer = consumer;
       boolean matches = true;
       while (!(consumer.canAcceptMoreMessage() && consumer.matches(message) &&
@@ -218,11 +251,14 @@ public class SBQueueDefault implements SBQueue<SMQMessage> {
         }
       }
       if (!matches) {
+        waitingToDispatch = message;
         logger.errorLog("no matcher found for message {} ", message);
+        //System.out.println("not accepted == "+message);
         // this message will be reattempted again.
         break;
       }
       else {
+        waitingToDispatch = null;
         consumer.dispatch(message);
       }
     }
@@ -234,8 +270,8 @@ public class SBQueueDefault implements SBQueue<SMQMessage> {
    * @param message
    * @return
    */
-  private boolean doesGroupApply(String groupId, int sequence, SMQMessage message, SBConsumer<SMQMessage> consumer){
-    if(groupId != null){
+  private boolean doesGroupApply(String groupId, Integer sequence, SMQMessage message, SBConsumer<SMQMessage> consumer){
+    if(groupId != null && sequence != null){
       if(sequence == 1) {
         // assign the group
         consumer.assignGroup(groupId);
@@ -289,8 +325,8 @@ public class SBQueueDefault implements SBQueue<SMQMessage> {
 
   //it returns the next message to be delivered
   private SMQMessage getMessage() throws IOException {
-    if(messageSupplier.hasMoreMessage()){
-      return messageSupplier.getNextMessage();
+    if(store.hasMoreMessage()){
+      return store.getNextMessage();
     }
     // this means that queue has no more message, so it has to wait for more message.
     return null;
@@ -298,6 +334,8 @@ public class SBQueueDefault implements SBQueue<SMQMessage> {
 
   // it gives next ready consumer for accepting the message.
   private SBConsumer<SMQMessage> getNextConsumer(){
-    return null;
+    SBConsumer<SMQMessage> consumer = consumerQueue.remove();
+    consumerQueue.add(consumer);
+    return consumer;
   }
 }

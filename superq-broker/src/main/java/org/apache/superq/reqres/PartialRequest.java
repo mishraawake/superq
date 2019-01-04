@@ -33,7 +33,7 @@ public class PartialRequest implements Partial {
 
   static {
     for(Class classToMap : WiredObjectFactory.classTypes ){
-      String handlerName = classToMap.getName() + "Handler";
+      String handlerName = "org.apache.superq.reqres." + classToMap.getSimpleName() + "Handler";
       RequestHandler classOfMessage = null;
       try {
         classOfMessage = (RequestHandler)Class.forName(handlerName).newInstance();

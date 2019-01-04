@@ -30,9 +30,10 @@ public class RamMessageSupplier implements MessageSupplier {
   }
 
   @Override
-  public boolean hasMoreMessage() {
-    return false;
+  public MessageEnumerator browserEnumerator() throws IOException {
+    return null;
   }
+
 
   @Override
   public void addMessage(SMQMessage smqMessage) throws IOException {

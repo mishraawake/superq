@@ -1,0 +1,5 @@
+Fix the serialization of qinfo:
+ - Implement the consumer
+ - right now we are sending destination info in every message append call, which is inefficient, we need to get it from
+ producer context
+ - Handle all the error condition
