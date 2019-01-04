@@ -28,6 +28,7 @@ public class InfiniteConsumers {
       public void onMessage(Message message) {
         try {
           System.out.println(((TextMessage)message).getText() + " -- consumer 1-- "+totalReceive.incrementAndGet());
+          //sleep(1);
         }
         catch (JMSException e) {
           e.printStackTrace();
@@ -42,12 +43,21 @@ public class InfiniteConsumers {
       public void onMessage(Message message) {
         try {
           System.out.println(((TextMessage)message).getText()+ " -- consumer 2 -- "+totalReceive.incrementAndGet());
-
+          //sleep(1);
         }
         catch (JMSException e) {
           e.printStackTrace();
         }
       }
     });
+  }
+
+  private static void sleep(int milisec){
+    try {
+      Thread.sleep(milisec);
+    }
+    catch (InterruptedException e) {
+      e.printStackTrace();
+    }
   }
 }

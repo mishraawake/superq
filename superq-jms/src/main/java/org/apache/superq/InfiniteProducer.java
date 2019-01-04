@@ -20,13 +20,15 @@ public class InfiniteProducer {
     Queue queue = session.createQueue("myq");
     MessageProducer producer = session.createProducer(queue);
     while(true) {
-      for (int messageCount = 0; messageCount < 100; messageCount++) {
+      long stime  = System.currentTimeMillis();
+      for (int messageCount = 0; messageCount < 100000; messageCount++) {
         TextMessage message = session.createTextMessage();
         message.setText("First message" + messageCount);
         message.setJMSDeliveryMode(DeliveryMode.PERSISTENT);
         producer.send(message, DeliveryMode.PERSISTENT, 4, 1000);
       }
       session.commit();
+      System.out.println(System.currentTimeMillis() - stime);
     }
   }
 }

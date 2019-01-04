@@ -222,7 +222,7 @@ public class OneRow<T extends Serialization> {
       memoryCell.write(leftOverByte, startingLocation);
     }
     medadata.setSize((location - medadata.getProcessedSize()) + leftOverByte.length);
-    this.randomAccessFile.getChannel().force(true);
+   // this.randomAccessFile.getChannel().force(true);
     return location;
   }
 

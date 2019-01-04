@@ -53,7 +53,7 @@ public class MessageStoreImpl implements MessageStore {
 
 
   public static class MessageBrowserEnumerator implements MessageEnumerator {
-    private int pageSize = 10;
+    private int pageSize = 1000;
     List<SMQMessage> messageFetched = null;
     Long lastMessageId = null;
     MessageStoreImpl messageStore;
