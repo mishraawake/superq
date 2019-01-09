@@ -70,9 +70,9 @@ public class BrokerServer {
               SocketChannel sc = ssc.accept();
               // System.out.println(sc.getRemoteAddress());
               sc.configureBlocking(false);
-              sc.socket().setTcpNoDelay(true);
-              sc.socket().setKeepAlive(true);
-              sc.socket().setReceiveBufferSize(1024 * 1024);
+              sc.socket().setTcpNoDelay(false);
+             // sc.socket().setKeepAlive(true);
+              sc.socket().setReceiveBufferSize(1024 * 1024*1024);
               SelectionKey key = sc.register(selector, SelectionKey.OP_READ);
               ConnectionContext connectionContext = new ConnectionContext(sc, key, broker, connectionId(sc.socket()));
               allConnectionContext.put(connectionId(sc.socket()), connectionContext);

@@ -4,17 +4,17 @@ import org.apache.superq.ConsumerInfo;
 import org.apache.superq.QueueInfo;
 import org.apache.superq.Serialization;
 
-public class InfoSizeableFactory<T extends Serialization> implements SizeableFactory<Serialization> {
+public class InfoSizeableFactory<T extends Serialization> implements SizeableFactory<T> {
   @Override
-  public Serialization getSizeable() {
+  public T getSizeable() {
     return null;
   }
 
   @Override
-  public Serialization getSizeableByType(short type) {
+  public T getSizeableByType(short type) {
     switch (type){
       case 7:
-        return new QueueInfo();
+        return (T)new QueueInfo();
     }
     return null;
   }

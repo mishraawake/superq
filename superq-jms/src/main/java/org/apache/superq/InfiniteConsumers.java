@@ -16,30 +16,24 @@ public class InfiniteConsumers {
   static long stime = System.currentTimeMillis();
 
   public static void main(String[] args) throws JMSException {
-
-    SMQConnectionFactory smqConnectionFactory = new SMQConnectionFactory("10.41.56.186", 1234);
+//"10.41.56.186"
+    SMQConnectionFactory smqConnectionFactory = new SMQConnectionFactory("localhost", 1234);
     Connection connection = smqConnectionFactory.createConnection();
     Session session = connection.createSession(true, 1);
 
     AtomicInteger totalReceive = new AtomicInteger(0);
     session = connection.createSession(false, Session.AUTO_ACKNOWLEDGE);
     Queue queue  = session.createQueue("myq");
-    MessageConsumer consumer = session.createConsumer(queue);
-    consumer.setMessageListener(new MessageListener() {
-      @Override
-      public void onMessage(Message message) {
-        receive(totalReceive);
-      }
-    });
-
-
-    consumer = session.createConsumer(queue);
-    consumer.setMessageListener(new MessageListener() {
-      @Override
-      public void onMessage(Message message) {
-        receive(totalReceive);
-      }
-    });
+    for (int consumers = 0; consumers < 1; consumers++) {
+      MessageConsumer consumer = session.createConsumer(queue);
+      final int consumerNo = consumers;
+      consumer.setMessageListener(new MessageListener() {
+        @Override
+        public void onMessage(Message message) {
+          receive(totalReceive, consumerNo);
+        }
+      });
+    }
   }
 
   private static void sleep(int milisec){
@@ -51,11 +45,14 @@ public class InfiniteConsumers {
     }
   }
 
-  private static void receive(AtomicInteger totalReceive){
+  private static void receive(AtomicInteger totalReceive, int consumerNo){
     int totalREceive = totalReceive.incrementAndGet();
+    //sleep(1);
+    //System.out.println(consumerNo);
     if(totalREceive % 100000 == 0){
-      System.out.println("receives "+totalREceive +" in "+(System.currentTimeMillis() - stime));
+      System.out.println(totalREceive + "receives "+consumerNo +" in "+(System.currentTimeMillis() - stime) );
       stime = System.currentTimeMillis();
+
     }
   }
 }

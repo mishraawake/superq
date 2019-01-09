@@ -17,7 +17,7 @@ public class FileDatabaseFactoryImpl<T extends Serialization> implements FileDat
 
   String dbLocation;
 
-  private static FileDatabaseFactory<Serialization> factory;
+  private static FileDatabaseFactory factory;
 
 
   static {
@@ -35,7 +35,7 @@ public class FileDatabaseFactoryImpl<T extends Serialization> implements FileDat
     if(!file.exists()){
       if(!Files.exists(Paths.get(dbLocation))) {
         Files.createDirectories(Paths.get(dbLocation));
-        infoDb = new FileDatabase<Serialization>(dbLocation  + "/info", new InfoSizeableFactory());
+        infoDb = new FileDatabase<Serialization>(dbLocation  + "/info", new InfoSizeableFactory<>());
         infoDb.setTyped();
       }
       return;
@@ -44,12 +44,12 @@ public class FileDatabaseFactoryImpl<T extends Serialization> implements FileDat
       if(dir.isDirectory()){
         String dbName = dir.getName();
         QueueDatabase database = new QueueDatabase();
-        database.infoDb = new FileDatabase<Serialization>(dbLocation +"/" + dbName + "/info", new InfoSizeableFactory());
+        database.infoDb = new FileDatabase<Serialization>(dbLocation +"/" + dbName + "/info", new InfoSizeableFactory<>());
         database.mainDB = new FileDatabase<SMQMessage>(dbLocation +"/" + dbName , new MessageSizeableFactory<SMQMessage>());
         databases.put(dbName, database);
       }
     }
-    infoDb = new FileDatabase<Serialization>(dbLocation  + "/info", new InfoSizeableFactory());
+    infoDb = new FileDatabase<Serialization>(dbLocation  + "/info", new InfoSizeableFactory<>());
     infoDb.setTyped();
   }
 
@@ -104,7 +104,7 @@ public class FileDatabaseFactoryImpl<T extends Serialization> implements FileDat
     return databases;
   }
 
-  public static FileDatabaseFactory getInstance(){
+  public static <M extends Serialization> FileDatabaseFactory<M> getInstance(){
     return factory;
   }
 }

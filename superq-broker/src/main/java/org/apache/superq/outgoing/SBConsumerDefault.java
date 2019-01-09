@@ -1,5 +1,6 @@
 package org.apache.superq.outgoing;
 
+import java.io.IOException;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -39,7 +40,7 @@ public class SBConsumerDefault implements SBConsumer<SMQMessage> {
   }
 
   @Override
-  public void dispatch(SMQMessage message) {
+  public void dispatch(SMQMessage message) throws IOException {
     if(outstandingAck >= maxUnackMessages){
       return;
     }
@@ -57,7 +58,7 @@ public class SBConsumerDefault implements SBConsumer<SMQMessage> {
     // state when consumer is
   }
 
-  private void doDispatch(SMQMessage message){
+  private void doDispatch(SMQMessage message) throws IOException  {
     message.setSessionId(sessionContext.getSessionInfo().getSessionId());
     message.setConsumerId(info.getId());
     message.setConnectionId(sessionContext.getConnectionContext().getInfo().getConnectionId());
@@ -82,7 +83,7 @@ public class SBConsumerDefault implements SBConsumer<SMQMessage> {
   }
 
   @Override
-  public SMQMessage pull() {
+  public SMQMessage pull() throws IOException {
     SMQMessage message = queue.pullMessage();
     dispatch(message);
     return null;

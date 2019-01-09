@@ -5,6 +5,7 @@ import java.util.List;
 
 import org.apache.superq.BrowserInfo;
 import org.apache.superq.ConsumerAck;
+import org.apache.superq.QueueInfo;
 import org.apache.superq.SMQMessage;
 import org.apache.superq.incoming.SBProducerContext;
 import org.apache.superq.network.ConnectionContext;
@@ -28,4 +29,5 @@ public interface SBQueue<M> {
   void dispose();
   void onConsumerReadyForMessage(SBConsumer<SMQMessage> messageSBConsumer);
   void putMessageOnAnotherConsumerGroup(SBConsumer<SMQMessage> messageSBConsumer);
+  QueueInfo getQInfo();
 }

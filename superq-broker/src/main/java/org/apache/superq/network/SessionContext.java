@@ -7,6 +7,7 @@ import java.util.function.Consumer;
 
 import javax.jms.JMSException;
 
+import org.apache.superq.CommitTransaction;
 import org.apache.superq.ConsumerInfo;
 import org.apache.superq.SessionInfo;
 import org.apache.superq.incoming.SBProducerContext;
@@ -71,8 +72,8 @@ public class SessionContext {
     return transactionId != -1;
   }
 
-  public void commitTransaction() throws IOException, JMSException {
-    transactionalStore.commit();
+  public void commitTransaction(CommitTransaction commitTransaction) throws IOException, JMSException {
+    transactionalStore.commit(connectionContext, commitTransaction);
     transactionalStore = null;
     transactionId = -1;
   }
@@ -86,7 +87,7 @@ public class SessionContext {
   public void startTransaction(long transactionId){
     if(transactionalStore == null)
       this.transactionId = transactionId;
-      transactionalStore = new TransactionalStoreImpl();
+      transactionalStore = new TransactionalStoreImpl(this.connectionContext.getBroker());
   }
 
   public TransactionalStore getCurrentTransaction(){

@@ -19,7 +19,6 @@ public class SMQTextMessageHandler implements RequestHandler<SMQTextMessage> {
     try {
       SBProducerContext producerContext =  handleError(message, connectionContext);
       if(producerContext != null){
-
         connectionContext.getBroker().appendMessage(message, producerContext);
       }
     }
@@ -30,11 +29,13 @@ public class SMQTextMessageHandler implements RequestHandler<SMQTextMessage> {
 
   private SBProducerContext handleError(SMQMessage message, ConnectionContext connectionContext) throws JMSException, IOException {
     SBProducerContext producerContext = connectionContext.getSession(message.getSessionId()).getProducers().get(message.getProducerId());
-    QueueInfo queueInfo = connectionContext.getBroker().getQueueInfo(((SMQDestination)message.getJMSDestination()).getDestinationId());
+    int destinationId = ((SMQDestination)message.getJMSDestination()).getDestinationId();
+    QueueInfo queueInfo = connectionContext.getBroker().getQueueInfo(destinationId);
     message.setJMSDestination(queueInfo);
     if(message.getJMSReplyTo() != null){
-       queueInfo = connectionContext.getBroker().getQueueInfo(((SMQDestination)message.getJMSReplyTo()).getDestinationId());
-      message.setJMSReplyTo(queueInfo);
+       destinationId = ((SMQDestination)message.getJMSReplyTo()).getDestinationId();
+       queueInfo = connectionContext.getBroker().getQueueInfo(destinationId);
+       message.setJMSReplyTo(queueInfo);
     }
     return producerContext;
   }

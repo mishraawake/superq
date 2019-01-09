@@ -317,6 +317,34 @@ public abstract class SerializationSupport implements Serialization {
     return dis.readByte();
   }
 
+  protected void serializeByteArray(DataOutputStream bb, byte[] field) throws IOException {
+    beforeField(field);
+    if(field != null) {
+
+      doSerializeByteArray(bb, field);
+    }
+  }
+
+  protected void doSerializeByteArray(DataOutputStream bb, byte[] field) throws IOException {
+    bb.writeInt(field.length);
+    bb.write(field);
+  }
+
+  protected byte[] deserializeByteArray(DataInputStream dis) throws IOException {
+    incrementIndex();
+    if(fieldArray.get(deserializingIndex)){
+      return doGetByteArray(dis);
+    }
+    return null;
+  }
+
+  protected byte[] doGetByteArray(DataInputStream dis) throws IOException {
+    int byteLength = dis.readInt();
+    byte[] bytes = new byte[byteLength];
+    dis.read(bytes);
+    return bytes;
+  }
+
   protected void serializeBoolean(DataOutputStream bb, Boolean field) throws IOException {
     beforeField(field);
     if(field != null) {

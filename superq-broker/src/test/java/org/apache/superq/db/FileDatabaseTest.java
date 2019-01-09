@@ -63,6 +63,7 @@ public class FileDatabaseTest extends AbstractTest{
       fileDatabase.appendMessage(getMessage(i));
       if(i % 100000 == 0){
         System.out.println( System.currentTimeMillis() - stime);
+        stime = System.currentTimeMillis();
       }
     }
     System.out.println( "finished = "+( System.currentTimeMillis() - stime));
@@ -164,7 +165,7 @@ public class FileDatabaseTest extends AbstractTest{
 
   private static String getString(long index) throws IOException {
     StringBuilder sb = new StringBuilder();
-    for (int i = 0; i < 50; i++) {
+    for (int i = 0; i < 1; i++) {
       sb.append("Hello First message ");
     }
     sb.append(index);

@@ -20,6 +20,9 @@ public class CallbackExecutor implements Runnable {
     Task task = null;
     try {
       while ((task = callbackTasks.take()) != null) {
+        if(callbackTasks.size() > 10){
+          //System.out.println(callbackTasks.size());
+        }
         try {
           task.perform();
         }

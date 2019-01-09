@@ -30,12 +30,13 @@ public class SBQueueDefault implements SBQueue<SMQMessage> {
 
   Logger logger = LoggerFactory.getLogger(SBQueueDefault.class);
   MessageSupplier messageSupplier;
-  MessageStore store;
+  MessageStore<SMQMessage> store;
   Broker broker;
   ConcurrentMap<String, ConsumerInfo> consumerMap = new ConcurrentHashMap<>();
   ConcurrentMap<Long, SBConsumer<SMQMessage>> consumerIdToConsumer = new ConcurrentHashMap<>();
   Queue<SBConsumer<SMQMessage>> consumerQueue = new LinkedList<>();
   SMQMessage waitingToDispatch = null;
+  QueueInfo info = null;
 
   TransactionSync afterTransactiondispatch = new TransactionSync() {
     @Override
@@ -49,9 +50,10 @@ public class SBQueueDefault implements SBQueue<SMQMessage> {
     }
   };
 
-  public SBQueueDefault(Broker broker, QueueInfo info, FileDatabase<SMQMessage> fileDatabase) throws IOException, JMSException {
+  public SBQueueDefault(Broker broker, QueueInfo info, MessageStore store) throws IOException, JMSException {
     this.broker = broker;
-    store = new IOMessageStoreFilter(new MessageStoreImpl(info.getQueueName(), fileDatabase), broker);
+    this.store = store;
+    this.info = info;
     messageSupplier = new RamMessageSupplier(store, info.getQueueName());
   }
 
@@ -134,8 +136,8 @@ public class SBQueueDefault implements SBQueue<SMQMessage> {
 
   @Override
   public void acceptBrowser(BrowserInfo browserInfo, SessionContext sessionContext) throws IOException {
-    MessageEnumerator messageEnumerator = store.browserEnumerator();
-    while(messageEnumerator.hasMoreElements()){
+    MessageEnumerator<SMQMessage> messageEnumerator = store.browserEnumerator(SMQMessage.class);
+    while(messageEnumerator.hasMoreElements(null)){
       SMQMessage message = messageEnumerator.nextElement();
       message.setConsumerId(browserInfo.getId());
       message.setSessionId(sessionContext.getSessionInfo().getSessionId());
@@ -183,7 +185,7 @@ public class SBQueueDefault implements SBQueue<SMQMessage> {
   @Override
   public void ackMessage(ConsumerAck consumerAck) throws IOException {
     consumerIdToConsumer.get(consumerAck.getId()).ack(consumerAck.getMessageId());
-    store.removeMessage(consumerAck.getMessageId());
+    //store.removeMessage(consumerAck.getMessageId());
     dispatchProcess();
     // ack message in doing so delete the message from the queue knowledge and also notify this event
     // the dispatching process would be interested into this event because it might have been stalled
@@ -225,6 +227,11 @@ public class SBQueueDefault implements SBQueue<SMQMessage> {
 
   }
 
+  @Override
+  public QueueInfo getQInfo() {
+    return info;
+  }
+
   // when a fresh set of consumers trying to connect to this queue, this queue will wait a configurable
   // amount of time to save the first consumer getting prefetch message.
   private void consumersReadyWait(){
@@ -233,12 +240,18 @@ public class SBQueueDefault implements SBQueue<SMQMessage> {
 
   private void dispatchProcess() throws IOException {
     // get the message one by one
-    // hand it over to consumer in round robin fashion or based on group id hand it over to only one consumer.
+    // hand it over to consumer in round robin fashion or based on group id, in that case hand it over to only one consumer.
     // put all handover message to the ack list.
     if(consumerQueue.size() == 0){
       return;
     }
-    while(waitingToDispatch != null || store.hasMoreMessage()) {
+    Task ioTask = new Task() {
+      @Override
+      public void perform() throws Exception {
+        SBQueueDefault.this.dispatchProcess();
+      }
+    };
+    while(waitingToDispatch != null || store.hasMoreMessage(ioTask)) {
       SMQMessage message = waitingToDispatch != null ? waitingToDispatch : store.getNextMessage();
       SBConsumer<SMQMessage> consumer = getNextConsumer(), fistConsumer = consumer;
       boolean matches = true;
@@ -325,9 +338,7 @@ public class SBQueueDefault implements SBQueue<SMQMessage> {
 
   //it returns the next message to be delivered
   private SMQMessage getMessage() throws IOException {
-    if(store.hasMoreMessage()){
-      return store.getNextMessage();
-    }
+
     // this means that queue has no more message, so it has to wait for more message.
     return null;
   }

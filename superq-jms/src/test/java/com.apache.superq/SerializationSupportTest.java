@@ -8,6 +8,7 @@ import javax.jms.Destination;
 import javax.jms.JMSException;
 
 import org.apache.superq.ConnectionInfo;
+import org.apache.superq.JumboText;
 import org.apache.superq.QueueInfo;
 import org.apache.superq.SMQDestination;
 import org.apache.superq.SMQTextMessage;
@@ -66,6 +67,23 @@ public class SerializationSupportTest {
     afterSerialization.acceptByteBuffer(queueInfo.getBuffer());
     System.out.println(afterSerialization);
     Assert.assertEquals(afterSerialization, queueInfo);
+  }
+
+  @Test
+  public void serializeJumbo() throws IOException, JMSException {
+    JumboText jumboText = new JumboText();
+    //queueInfo.setId(2);
+    //queueInfo.setPacketId(-3);
+    jumboText.setNumberOfItems(100);
+    byte[] bytes = new byte[10];
+    bytes[9] = 10;
+    jumboText.setBytes(bytes);
+    JumboText afterSerialization  = new JumboText();
+    afterSerialization.acceptByteBuffer(jumboText.getBuffer());
+    System.out.println(afterSerialization);
+    jumboText = new JumboText();
+    jumboText.acceptByteBuffer(afterSerialization.getBuffer());
+    Assert.assertEquals(afterSerialization, jumboText);
   }
 
   @Test

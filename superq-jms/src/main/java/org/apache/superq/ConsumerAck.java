@@ -31,4 +31,6 @@ public class ConsumerAck extends ConsumerInfo {
   public short getType(){
     return 11;
   }
+
+
 }

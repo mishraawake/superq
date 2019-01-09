@@ -14,23 +14,46 @@ import javax.jms.TextMessage;
 
 public class InfiniteProducer {
   public static void main(String[] args) throws JMSException {
-    SMQConnectionFactory smqConnectionFactory = new SMQConnectionFactory("10.41.56.186", 1234);
+    //10.41.56.186
+    SMQConnectionFactory smqConnectionFactory = new SMQConnectionFactory("localhost", 1234);
     Connection connection = smqConnectionFactory.createConnection();
     Session session = connection.createSession(true, 1);
     Queue queue = session.createQueue("myq");
     MessageProducer producer = session.createProducer(queue);
+    int count = 0;
     while(true) {
       long stime  = System.currentTimeMillis();
       for (int i = 0; i < 1; i++) {
         for (int messageCount = 0; messageCount < 100000; messageCount++) {
           TextMessage message = session.createTextMessage();
-          message.setText("First message" + messageCount);
+          String str = getText(10);
+          message.setText( str + messageCount);
           message.setJMSDeliveryMode(DeliveryMode.PERSISTENT);
           producer.send(message, DeliveryMode.PERSISTENT, 4, 1000);
+          ++count;
         }
         session.commit();
       }
-      System.out.println(System.currentTimeMillis() - stime);
+      sleep(500);
+      System.out.println("total time"+(System.currentTimeMillis() - stime)+" total = "+count);
+    }
+  }
+  private static String getText(int msg){
+    StringBuilder str = new StringBuilder();
+    for (int count = 0; count < msg; count++) {
+      str.append("First message ");
+    }
+    return str.toString();
+  }
+
+  private static void sleep(int milis){
+    try {
+      Thread.sleep(milis);
+    }
+    catch (InterruptedException e) {
+      e.printStackTrace();
     }
   }
 }
+
+

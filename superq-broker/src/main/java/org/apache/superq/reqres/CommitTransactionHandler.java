@@ -17,8 +17,8 @@ public class CommitTransactionHandler implements RequestHandler<CommitTransactio
     SessionContext sessionContext = connectionContext.getSession(commitTransaction.getSessionId());
     if(sessionContext != null && sessionContext.getTransactionId() == commitTransaction.getTransactionId()){
       try {
-        sessionContext.commitTransaction();
-        connectionContext.sendAsyncPacket(commitTransaction);
+        sessionContext.commitTransaction(commitTransaction);
+
       }
       catch (IOException e) {
         e.printStackTrace();

@@ -25,8 +25,8 @@ public class BrokerService {
     Map<String, FileDatabaseFactory.QueueDatabase> databases = FileDatabaseFactoryImpl.
             getInstance().getAvailableInfoDbs();
 
-    FileDatabase<QueueInfo> fileDatabase = FileDatabaseFactoryImpl.getInstance().
-            getInfoDatabase(new InfoSizeableFactory());
+    FileDatabase<QueueInfo> fileDatabase = FileDatabaseFactoryImpl.<QueueInfo>getInstance().
+            getInfoDatabase(new InfoSizeableFactory<QueueInfo>());
 
     for(QueueInfo queueInfo : fileDatabase.getAllMessage() ){
       broker.registerQueue(queueInfo);

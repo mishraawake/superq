@@ -28,6 +28,7 @@ public class PartialRequest implements Partial {
   ByteBuffer size = ByteBuffer.allocate(INT_PLUS_MESSAGE_TYE);
   WiredObjectFactory rf = new ConstArrayWiredObjectFactory();
   private PartialRequest partialRequest = null;
+  private boolean emptyByte = true;
   short messageType;
   static Map<String, RequestHandler> handlerObject = new ConcurrentHashMap<>();
 
@@ -57,12 +58,13 @@ public class PartialRequest implements Partial {
     if(size.position() < INT_PLUS_MESSAGE_TYE){
       readOrThrowException(ssc, size);
       return;
-    } else if(bb == null) {
+    } else if(emptyByte) {
       size.flip();
       remaining = size.getInt();
       messageType = size.getShort();
       bb = ByteBuffer.allocate(remaining);
       remaining -= readOrThrowException(ssc, bb);
+      emptyByte = false;
     }
     if(remaining > 0){
       remaining -= readOrThrowException(ssc, bb);
@@ -85,15 +87,21 @@ public class PartialRequest implements Partial {
 
   @Override
   public Task handle(final ConnectionContext context) throws IOException {
-    return new Task(){
+    startedReading = false;
+    remaining = INT_PLUS_MESSAGE_TYE + 1;
+    size = ByteBuffer.allocate(INT_PLUS_MESSAGE_TYE);
+    emptyByte = true;
+    byte[] array = bb.array();
+    Task task = new Task(){
       @Override
       public void perform() throws Exception {
         Class classOfMessage = rf.getInitialPartialRequest(messageType);
         Serialization instantiate = (Serialization)classOfMessage.newInstance();
-        instantiate.acceptByteBuffer(bb.array());
+        instantiate.acceptByteBuffer(array);
         handlerObject.get(classOfMessage.getName()).handle(instantiate, context);
       }
     };
+    return task;
   }
 
   public BrokerServer getSer() {

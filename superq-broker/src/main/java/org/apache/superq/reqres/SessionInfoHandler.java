@@ -1,5 +1,7 @@
 package org.apache.superq.reqres;
 
+import java.io.IOException;
+
 import org.apache.superq.Serialization;
 import org.apache.superq.SessionInfo;
 import org.apache.superq.network.ConnectionContext;
@@ -20,6 +22,13 @@ public class SessionInfoHandler implements RequestHandler<SessionInfo> {
     }
     if(connectionContext.getSession(sessionInfo.getSessionId()) == null) {
       connectionContext.registerSession(sessionInfo);
+    }
+
+    try {
+      connectionContext.sendAsyncPacket(sessionInfo);
+    }
+    catch (IOException e) {
+      e.printStackTrace();
     }
   }
 }

@@ -10,7 +10,7 @@ public class PreIOFilter {
 
   public void beforeIO(){
     if(broker.isCallbackThread()){
-     // throw new RuntimeException("IO can not be called in callback thread");
+//      throw new RuntimeException("IO can not be called in callback thread");
     }
   }
 }

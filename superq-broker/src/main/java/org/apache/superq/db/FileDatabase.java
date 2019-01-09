@@ -167,19 +167,19 @@ public class FileDatabase<T extends Serialization> {
     }
   }
 
-  public List<T> getOldMessage(int additional) throws IOException {
+  public synchronized List<T> getOldMessage(int additional) throws IOException {
     long startIndex = indexRow.medadata.messageOffset();
     List<T> list = new ArrayList<>();
     long i = startIndex;
-    for(; i < startIndex + additional ; ++i){
+    for(; list.size() <  additional ; ++i){
       IndexEntry indexEntry = indexRow.getEntry(i*IndexEntry.SIZE, IndexEntry.SIZE);
       if(indexEntry ==  null){
+        System.out.println("toota hua index entry ="+startIndex);
         break;
       }
       if(indexEntry.getMessageLength() == 0){
         System.out.println("foota hua index entry ="+startIndex);
-        i++;
-        break;
+        continue;
       }
       T message = getMessageFromMessageDB(indexEntry, i);
       list.add(message);

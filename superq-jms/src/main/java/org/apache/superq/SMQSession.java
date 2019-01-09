@@ -47,7 +47,7 @@ public class SMQSession implements javax.jms.Session {
   }
 
   public void initialize() throws JMSException {
-    sendAsynchronously(createSessionInfo());
+    this.connection.sendSync(createSessionInfo());
     if(this.connection.isStarted()){
       this.start();
     }
@@ -176,7 +176,7 @@ public class SMQSession implements javax.jms.Session {
     producerInfo.setId(prodducerId);
     producerInfo.setSessionId(this.getId());
     producerInfo.setConnectionId(this.getConnection().getConnectionId());
-    sendAsynchronously(producerInfo);
+    this.connection.sendSync(producerInfo);
     producerMap.put(prodducerId, producer);
     return producer;
   }
@@ -308,6 +308,7 @@ public class SMQSession implements javax.jms.Session {
     }
     message.setSessionId(this.getId());
     if(isTransacted){
+     // message.setResponseRequire(true);
       this.connection.sendAsync(message);
     } else {
       this.connection.sendSync(message, timeout);

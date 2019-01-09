@@ -1,5 +1,7 @@
 package org.apache.superq.reqres;
 
+import java.io.IOException;
+
 import org.apache.superq.ProducerInfo;
 import org.apache.superq.incoming.SBProducerContext;
 import org.apache.superq.network.ConnectionContext;
@@ -24,8 +26,17 @@ public class ProducerInfoHandler implements RequestHandler<ProducerInfo> {
 
     SBProducerContext sbProducerContext = new SBProducerContext(info);
     sbProducerContext.setSessionContext(sqSession);
+    sbProducerContext.setConnectionContext(connectionContext);
     if(sqSession.getProducers().putIfAbsent(info.getId(), sbProducerContext) != null){
       // handle duplicate
+    }
+
+   // connectionContext.setPr(new MaxReaderPartialRequest());
+    try {
+      connectionContext.sendAsyncPacket(info);
+    }
+    catch (IOException e) {
+      e.printStackTrace();
     }
   }
 }
