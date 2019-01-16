@@ -42,10 +42,11 @@ public class TransactionalStoreImpl implements TransactionalStore {
         long stime = System.currentTimeMillis();
         for (SMQMessage message : messageList) {
           String qname = ((QueueInfo) message.getJMSDestination()).getQueueName();
-          MessageStore<SMQMessage> essageStore = broker.getMainMessageStore(qname);
-          essageStore.addMessage(message);
+          MessageStore<SMQMessage> messageStore = broker.getMainMessageStore(qname);
+          messageStore.addMessage(message);
         }
-        System.out.println("time in commiting " + (System.currentTimeMillis() - stime) + " of "+messageList.size());
+        System.out.println("time in commiting " + (System.currentTimeMillis() - stime) +
+                                   " of "+messageList.size() + " "+connectionContext.getInfo().getConnectionId());
       }
     }, new Task() {
       @Override

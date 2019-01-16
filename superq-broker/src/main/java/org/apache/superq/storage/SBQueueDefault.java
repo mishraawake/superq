@@ -1,6 +1,7 @@
 package org.apache.superq.storage;
 
 import java.io.IOException;
+import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.PriorityQueue;
@@ -15,6 +16,7 @@ import org.apache.superq.BrowserInfo;
 import org.apache.superq.ConsumerAck;
 import org.apache.superq.ConsumerInfo;
 import org.apache.superq.ProduceAck;
+import org.apache.superq.PullMessage;
 import org.apache.superq.QueueInfo;
 import org.apache.superq.SMQMessage;
 import org.apache.superq.Task;
@@ -33,7 +35,7 @@ public class SBQueueDefault implements SBQueue<SMQMessage> {
   MessageStore<SMQMessage> store;
   Broker broker;
   ConcurrentMap<String, ConsumerInfo> consumerMap = new ConcurrentHashMap<>();
-  ConcurrentMap<Long, SBConsumer<SMQMessage>> consumerIdToConsumer = new ConcurrentHashMap<>();
+  ConcurrentMap<String, SBConsumer<SMQMessage>> consumerIdToConsumer = new ConcurrentHashMap<>();
   Queue<SBConsumer<SMQMessage>> consumerQueue = new LinkedList<>();
   SMQMessage waitingToDispatch = null;
   QueueInfo info = null;
@@ -101,7 +103,6 @@ public class SBQueueDefault implements SBQueue<SMQMessage> {
         messageSupplier.addMessage(message);
         dispatchProcess();
       }
-
     }
 
     if(message.isResponseRequire()){
@@ -114,11 +115,15 @@ public class SBQueueDefault implements SBQueue<SMQMessage> {
     return false;
   }
 
+  private String getId(ConsumerInfo consumerInfo){
+    return consumerInfo.getSessionId() + "_" + consumerInfo.getId();
+  }
+
   @Override
   public void acceptConsumer(SBConsumer<SMQMessage> consumer) throws IOException {
     consumerQueue.add(consumer);
     consumer.start();
-    consumerIdToConsumer.putIfAbsent(consumer.getConsumerInfo().getId(), consumer);
+    consumerIdToConsumer.putIfAbsent(getId(consumer.getConsumerInfo()), consumer);
     dispatchProcess();
     // add to the list of consumers
     // it will only do anything if it has been started successfully.
@@ -129,8 +134,8 @@ public class SBQueueDefault implements SBQueue<SMQMessage> {
   }
 
   @Override
-  public void removeConsumer(Long consumerId) throws IOException {
-    SBConsumer consumer = consumerIdToConsumer.remove(consumerId);
+  public void removeConsumer(ConsumerInfo consumerInfo) throws IOException {
+    SBConsumer consumer = consumerIdToConsumer.remove(getId(consumerInfo));
     consumerQueue.remove(consumer);
   }
 
@@ -146,9 +151,9 @@ public class SBQueueDefault implements SBQueue<SMQMessage> {
   }
 
   @Override
-  public List<SBConsumer<SMQMessage>> getConsumers() {
+  public Queue<SBConsumer<SMQMessage>> getConsumers() {
     // return the list of  consumers
-    return null;
+    return consumerQueue;
   }
 
   @Override
@@ -174,7 +179,10 @@ public class SBQueueDefault implements SBQueue<SMQMessage> {
   }
 
   @Override
-  public SMQMessage pullMessage() {
+  public SMQMessage pullMessage(PullMessage pullMessage) throws IOException {
+
+    consumerIdToConsumer.get(getId(pullMessage)).pull();
+    dispatchProcess();
     // if this method is called, queue will fetch message and handover to this method. The difference in
     // pull and dispatch is that dispatch handover the dispatched message to consumer but this method will
     // get the message and handover to this message. This method will get message in same underlying resource
@@ -184,8 +192,8 @@ public class SBQueueDefault implements SBQueue<SMQMessage> {
 
   @Override
   public void ackMessage(ConsumerAck consumerAck) throws IOException {
-    consumerIdToConsumer.get(consumerAck.getId()).ack(consumerAck.getMessageId());
-    //store.removeMessage(consumerAck.getMessageId());
+    consumerIdToConsumer.get(getId(consumerAck)).ack(consumerAck.getMessageId());
+    store.removeMessage(consumerAck.getMessageId());
     dispatchProcess();
     // ack message in doing so delete the message from the queue knowledge and also notify this event
     // the dispatching process would be interested into this event because it might have been stalled
@@ -199,7 +207,12 @@ public class SBQueueDefault implements SBQueue<SMQMessage> {
 
   @Override
   public QStatus getStatus() {
-    return null;
+    return new QStatus() {
+      @Override
+      public MessageEnumerator getMessageEnumerator() {
+        return store.getMessageEnumerator();
+      }
+    };
   }
 
   @Override

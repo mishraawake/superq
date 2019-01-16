@@ -18,7 +18,8 @@ public interface WiredObjectFactory {
           ConsumerInfo.class, //9
           BrowserInfo.class, //10
           ConsumerAck.class, //11
-          JumboText.class //12
+          JumboText.class, //12
+          PullMessage.class //13
 
 
   };

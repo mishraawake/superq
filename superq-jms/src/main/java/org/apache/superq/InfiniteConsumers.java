@@ -22,18 +22,30 @@ public class InfiniteConsumers {
     Session session = connection.createSession(true, 1);
 
     AtomicInteger totalReceive = new AtomicInteger(0);
+    for (int counsumerCount = 0; counsumerCount < 1000; counsumerCount++) {
+
     session = connection.createSession(false, Session.AUTO_ACKNOWLEDGE);
-    Queue queue  = session.createQueue("myq");
-    for (int consumers = 0; consumers < 1; consumers++) {
+      final int cc = counsumerCount;
+      Queue queue  = session.createQueue("myq");
       MessageConsumer consumer = session.createConsumer(queue);
-      final int consumerNo = consumers;
       consumer.setMessageListener(new MessageListener() {
         @Override
         public void onMessage(Message message) {
-          receive(totalReceive, consumerNo);
+          receive(totalReceive, cc);
         }
       });
     }
+
+
+    /*
+  int count =0 ;
+  while (true){
+    consumer.receive();
+    ++count;
+    System.out.println(count);
+  }
+  */
+
   }
 
   private static void sleep(int milisec){
@@ -47,12 +59,15 @@ public class InfiniteConsumers {
 
   private static void receive(AtomicInteger totalReceive, int consumerNo){
     int totalREceive = totalReceive.incrementAndGet();
-    //sleep(1);
-    //System.out.println(consumerNo);
-    if(totalREceive % 100000 == 0){
-      System.out.println(totalREceive + "receives "+consumerNo +" in "+(System.currentTimeMillis() - stime) );
+    sleep(10);
+    if(totalREceive == 1){
       stime = System.currentTimeMillis();
-
+      System.out.println(totalREceive + "receives");
+    }
+    //System.out.println(consumerNo);
+    if(totalREceive % 10000 == 0){
+      System.out.println(totalREceive + "receives "+consumerNo +" in "+(System.currentTimeMillis() - stime) + " "+Thread.currentThread().getName() );
     }
   }
 }
+

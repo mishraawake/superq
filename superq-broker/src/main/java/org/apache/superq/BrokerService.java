@@ -1,9 +1,12 @@
 package org.apache.superq;
 
 import java.io.IOException;
+import java.lang.management.ManagementFactory;
 import java.util.Map;
 
 import javax.jms.JMSException;
+import javax.management.MBeanServer;
+import javax.management.ObjectName;
 
 import org.apache.superq.db.FileDatabase;
 import org.apache.superq.db.FileDatabaseFactory;
@@ -13,9 +16,12 @@ import org.apache.superq.network.BrokerServer;
 
 public class BrokerService {
 
+  MBeanServer mbs =
+          ManagementFactory.getPlatformMBeanServer();
 
   public void start() throws IOException, JMSException {
     Broker broker = new Broker();
+    broker.setMBeanServer(mbs);
     broker.start();
     initializeQueue(broker);
     BrokerServer bs = new BrokerServer(1234, broker);

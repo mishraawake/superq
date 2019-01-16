@@ -23,6 +23,7 @@ public class ResponsePartial implements Partial {
   public void tryComplete(SocketChannel ssc) throws IOException {
     byte[] responseByte = serialization.getBuffer();
     if(!started){
+      started = true;
       remaining = responseByte.length + Integer.BYTES + Short.BYTES;
       bb = ByteBuffer.allocate(remaining);
       bb.putInt(serialization.getSize());
@@ -30,6 +31,7 @@ public class ResponsePartial implements Partial {
       bb.put(responseByte);
       bb.flip();
       remaining -= ssc.write(bb);
+      return;
     }
     if(remaining > 0){
       remaining -= ssc.write(bb);

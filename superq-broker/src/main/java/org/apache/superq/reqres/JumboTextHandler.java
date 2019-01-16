@@ -36,8 +36,8 @@ public class JumboTextHandler implements RequestHandler<JumboText> {
         PartialRequest.handlerObject.get(classOfMessage.getName()).handle(instantiate, connectionContext);
         ++count;
       }
-      if (count > 1 && !(first instanceof SMQMessage))
-        System.out.println("Jumbo handler "+count+" "+first.getClass());
+      //if (count > 1 && !(first instanceof SMQMessage))
+        //System.out.println("Jumbo handler "+count+" "+first.getClass());
     }
     catch (Exception e) {
       e.printStackTrace();

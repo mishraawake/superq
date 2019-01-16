@@ -15,4 +15,8 @@ public interface MessageStore<M extends Serialization> extends  MessageSupplier<
   default List<M> allMessages() throws IOException {
     throw new NotImplementedException();
   }
+
+  default MessageEnumerator<M> getMessageEnumerator() {
+    throw new NotImplementedException();
+  }
 }

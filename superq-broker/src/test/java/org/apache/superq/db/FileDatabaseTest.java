@@ -9,26 +9,13 @@ import java.util.Random;
 import javax.jms.JMSException;
 
 import org.apache.superq.SMQDestination;
+import org.apache.superq.SMQMessage;
 import org.apache.superq.SMQTextMessage;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
 public class FileDatabaseTest extends AbstractTest{
-
-  FileDatabase<SMQTextMessage> fileDatabase;
-  SizeableFactory<SMQTextMessage> messageFactory = new MessageSizeableFactory();
-  @Before
-  public void setUp() throws IOException {
-
-    if(new File(TEST_DATA_DIRECTORY).exists())
-    for(File f: new File(TEST_DATA_DIRECTORY).listFiles()){
-      if(f.exists())
-        f.delete();
-    }
-    fileDatabase = new FileDatabase<SMQTextMessage>(TEST_DATA_DIRECTORY + "/myq", messageFactory);
-    fileDatabase.setTyped();
-  }
 
   @Test
   public void testMessageREtrieval() throws IOException, JMSException {
@@ -42,7 +29,7 @@ public class FileDatabaseTest extends AbstractTest{
       System.out.println("Total time spend" + (stime - System.currentTimeMillis()));
 
       for (int batch = 0; batch < 10; batch++) {
-        List<SMQTextMessage> messagesList = fileDatabase.getOldMessage(100000);
+        List<SMQMessage> messagesList = fileDatabase.getOldMessage(100000);
         Assert.assertEquals(messagesList.size(), 100000);
       }
 
@@ -69,12 +56,12 @@ public class FileDatabaseTest extends AbstractTest{
     System.out.println( "finished = "+( System.currentTimeMillis() - stime));
 
 
-    SMQTextMessage message = null;
+    SMQMessage message = null;
     stime = System.currentTimeMillis();
     for (long i = 1; i < overFlowSize ; i++) {
       message = fileDatabase.getMessage(i);
       //message.setContent();
-      Assert.assertEquals(message.getText().substring(length), getMessage(i-1).getText().substring(length));
+      Assert.assertEquals(((SMQTextMessage)message).getText().substring(length), getMessage(i-1).getText().substring(length));
      if(i%100000 == 0)
       System.out.println(i +" "+(System.currentTimeMillis() - stime));
     }
@@ -100,7 +87,7 @@ public class FileDatabaseTest extends AbstractTest{
         index = 1;
       }
 
-      message = fileDatabase.getMessage(index);
+      message = (SMQTextMessage)fileDatabase.getMessage(index);
       //message.setContent();
       Assert.assertEquals(message.getText().substring(length), getMessage(index-1).getText().substring(length));
       if(i%100_000 == 0)
@@ -115,12 +102,12 @@ public class FileDatabaseTest extends AbstractTest{
       fileDatabase.appendMessage(getMessage(i));
     }
 
-    SMQTextMessage message = fileDatabase.getMessage(10);
+    SMQTextMessage message = (SMQTextMessage)fileDatabase.getMessage(50);
     System.out.println(message);
     Assert.assertNotNull(message);
-    fileDatabase.deleteMessage(10);
+    fileDatabase.deleteMessage(50);
 
-    message = fileDatabase.getMessage(10);
+    message = (SMQTextMessage)fileDatabase.getMessage(50);
     System.out.println(message);
     Assert.assertNull(message);
 

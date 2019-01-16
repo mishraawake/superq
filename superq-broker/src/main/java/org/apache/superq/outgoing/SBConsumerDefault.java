@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.apache.superq.ConsumerInfo;
 import org.apache.superq.SMQMessage;
@@ -31,6 +32,7 @@ public class SBConsumerDefault implements SBConsumer<SMQMessage> {
   final int maxUnackMessages = 1000;
   // 0: starting, 1: started, 2: closing
   private int state = 0;
+  AtomicBoolean pendingPull = new AtomicBoolean(false);
   private Map<Long, SMQMessage> unacks = new ConcurrentHashMap<>();
   private SBQueue<SMQMessage> queue;
 
@@ -41,19 +43,24 @@ public class SBConsumerDefault implements SBConsumer<SMQMessage> {
 
   @Override
   public void dispatch(SMQMessage message) throws IOException {
-    if(outstandingAck >= maxUnackMessages){
-      return;
+    if(info.isAsync()) {
+      if (outstandingAck >= maxUnackMessages) {
+        return;
+      }
+      if (state == 0) {
+        // its not ready yet
+        return;
+      }
+      if (state == 2) {
+        logger.warnLog("Consumer is closing so can not relay the messages");
+      }
+      ++outstandingAck;
+      unacks.putIfAbsent(message.getJmsMessageLongId(), message);
+      doDispatch(message);
+    } else if(!info.isAsync() && pendingPull.get()){
+      doDispatch(message);
+      pendingPull.compareAndSet(true, false);
     }
-    if(state == 0){
-      // its not ready yet
-      return;
-    }
-    if(state == 2){
-      logger.warnLog("Consumer is closing so can not relay the messages");
-    }
-    ++outstandingAck;
-    unacks.putIfAbsent(message.getJmsMessageLongId(), message);
-    doDispatch(message);
     // actual dispatch the message
     // state when consumer is
   }
@@ -84,8 +91,7 @@ public class SBConsumerDefault implements SBConsumer<SMQMessage> {
 
   @Override
   public SMQMessage pull() throws IOException {
-    SMQMessage message = queue.pullMessage();
-    dispatch(message);
+    pendingPull.compareAndSet(false, true);
     return null;
   }
 
@@ -124,7 +130,15 @@ public class SBConsumerDefault implements SBConsumer<SMQMessage> {
 
   @Override
   public boolean canAcceptMoreMessage() {
-    return outstandingAck < maxUnackMessages;
+    return acceptIfAsync() || acceptIfSync();
+  }
+
+  private boolean acceptIfAsync(){
+    return outstandingAck < maxUnackMessages && info.isAsync();
+  }
+
+  private boolean acceptIfSync(){
+    return pendingPull.get() && !info.isAsync();
   }
 
   @Override

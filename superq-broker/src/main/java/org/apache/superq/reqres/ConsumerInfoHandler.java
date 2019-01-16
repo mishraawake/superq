@@ -11,6 +11,7 @@ import org.apache.superq.outgoing.SBConsumerDefault;
 public class ConsumerInfoHandler implements RequestHandler<ConsumerInfo> {
   @Override
   public void handle(ConsumerInfo consumerInfo, ConnectionContext connectionContext) {
+
     if(connectionContext.getInfo().getConnectionId() != consumerInfo.getConnectionId()){
       // error condition
       throw new IllegalStateException("Producer connectionId "+consumerInfo.getConnectionId()+

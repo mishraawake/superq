@@ -7,6 +7,8 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import javax.jms.Destination;
 import javax.jms.JMSException;
+import javax.management.MBeanServer;
+import javax.management.ObjectName;
 
 import org.apache.superq.db.FileDatabase;
 import org.apache.superq.db.FileDatabaseFactory;
@@ -21,6 +23,7 @@ import org.apache.superq.outgoing.SBConsumer;
 import org.apache.superq.storage.IOMessageStoreFilter;
 import org.apache.superq.storage.MessageStore;
 import org.apache.superq.storage.MessageStoreImpl;
+import org.apache.superq.storage.QueueStats;
 import org.apache.superq.storage.SBQueue;
 import org.apache.superq.storage.SBQueueDefault;
 import org.apache.superq.storage.TransactionalStore;
@@ -38,10 +41,15 @@ public class Broker {
   Map<String, MessageStore<QueueInfo>> infoStores = new ConcurrentHashMap<>();
   Map<String, MessageStore<SMQMessage>> mainStores = new ConcurrentHashMap<>();
   volatile MessageStore<QueueInfo> mainInfo;
+  MBeanServer mbs;
 
 
   public Broker(){
     callbackExecutor = new CallbackExecutor(callbackThread);
+  }
+
+  public void setMBeanServer(MBeanServer mbs){
+    this.mbs = mbs;
   }
 
   public void start(){
@@ -109,14 +117,28 @@ public class Broker {
     MessageStore<SMQMessage> mainDatabase = getMainMessageStore(qinfo.getQueueName());
     if(queueInfo == null){
       getInfoMessageStore().addMessage(qinfo);
-      messageQueueMap.putIfAbsent(qinfo.getId(), new SBQueueDefault(this, qinfo, mainDatabase));
+      registerQueue(qinfo);
     } else {
-      messageQueueMap.putIfAbsent(qinfo.getId(), new SBQueueDefault(this, qinfo, mainDatabase));
+      registerQueue(qinfo);
     }
   }
 
   public void registerQueue(QueueInfo qinfo) throws JMSException, IOException {
-    messageQueueMap.putIfAbsent(qinfo.getId(), new SBQueueDefault(this, qinfo, getMainMessageStore(qinfo.getQueueName())));
+    SBQueue<SMQMessage> messageSBQueue = messageQueueMap.putIfAbsent(qinfo.getId(), new SBQueueDefault(
+            this, qinfo, getMainMessageStore(qinfo.getQueueName())));
+    if(messageSBQueue == null && mbs != null){
+      registerQueueInMBean(messageQueueMap.get(qinfo.getId()));
+    }
+  }
+
+  private void registerQueueInMBean(SBQueue<SMQMessage> smqMessageSBQueue) {
+    try {
+      QueueStats queueStats = new QueueStats(smqMessageSBQueue);
+      ObjectName mxbeanName = new ObjectName("org.apache.superq:type=QueueStats");
+      mbs.registerMBean(queueStats, mxbeanName);
+    } catch (Exception e){
+      e.printStackTrace();
+    }
   }
 
 
@@ -165,7 +187,7 @@ public class Broker {
 
   public void removeConsumer(ConsumerInfo consumerInfo) throws IOException {
     SBQueue<SMQMessage> queue = getSBQueue(consumerInfo.getQid());
-    queue.removeConsumer(consumerInfo.getId());
+    queue.removeConsumer(consumerInfo);
   }
 
   public void removeConnection(String connectionId){
@@ -174,5 +196,10 @@ public class Broker {
 
   public void setAllConnectionContext(Map<String, ConnectionContext> allConnectionContext) {
     this.allConnectionContext = allConnectionContext;
+  }
+
+  public void pullMessage(PullMessage pullMessage) throws IOException {
+    SBQueue<SMQMessage> queue = getSBQueue(pullMessage.getQid());
+    queue.pullMessage(pullMessage);
   }
 }

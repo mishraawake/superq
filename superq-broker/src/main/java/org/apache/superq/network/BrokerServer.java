@@ -5,6 +5,7 @@ import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.SocketAddress;
+import java.net.SocketOption;
 import java.nio.channels.SelectableChannel;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.Selector;
@@ -50,7 +51,7 @@ public class BrokerServer {
   private void startListening(int port) throws IOException {
     ServerSocketChannel channel = ServerSocketChannel.open();
     channel.configureBlocking(false);
-    channel.bind(getSocketAddress());
+    channel.bind(getSocketAddress(), 100);
     channel.register(selector, SelectionKey.OP_ACCEPT);
     System.out.println("Server started!");
     while(true){

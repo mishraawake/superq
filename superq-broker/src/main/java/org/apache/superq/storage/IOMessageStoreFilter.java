@@ -7,6 +7,7 @@ import org.apache.superq.Broker;
 import org.apache.superq.PreIOFilter;
 import org.apache.superq.Serialization;
 import org.apache.superq.Task;
+import sun.reflect.generics.reflectiveObjects.NotImplementedException;
 
 public class IOMessageStoreFilter<M extends Serialization> implements MessageStoreFilter<M> {
 
@@ -53,5 +54,9 @@ public class IOMessageStoreFilter<M extends Serialization> implements MessageSto
   public List<M> allMessages() throws IOException {
     preIOFilter.beforeIO();
     return store.allMessages();
+  }
+
+  public MessageEnumerator<M> getMessageEnumerator() {
+    return store.getMessageEnumerator();
   }
 }

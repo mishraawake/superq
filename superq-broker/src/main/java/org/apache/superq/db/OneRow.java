@@ -180,7 +180,7 @@ public class OneRow<T extends Serialization> {
   }
 
 
-  public long append(T entry) throws IOException {
+  public synchronized long append(T entry) throws IOException {
     return append(entry, medadata.getProcessedSize() +  memoryCell.getStartIndex() + memoryCell.getLastValidLocation());
   }
 

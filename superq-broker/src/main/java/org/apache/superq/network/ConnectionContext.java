@@ -11,10 +11,12 @@ import java.util.Map;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 import org.apache.superq.Broker;
 import org.apache.superq.ConnectionInfo;
+import org.apache.superq.CorrelatedPacket;
 import org.apache.superq.JumboText;
 import org.apache.superq.SMQMessage;
 import org.apache.superq.Serialization;
@@ -36,6 +38,8 @@ public class ConnectionContext {
   PartialRequest pr = new PartialRequest();
   Broker broker;
   String id;
+  AtomicInteger totalSendResponse =  new AtomicInteger(0);
+  AtomicInteger totalWrote =  new AtomicInteger(0);
   private volatile boolean goForJumbo = true;
   private volatile ResponsePartial responsePartial;
 
@@ -49,39 +53,53 @@ public class ConnectionContext {
   // will be executed by callback thread
   public synchronized void sendAsyncPacket(Serialization serialization) throws IOException {
     queuedUpResponses.add((serialization));
+    totalSendResponse.incrementAndGet();
+    if(serialization instanceof CorrelatedPacket){
+      CorrelatedPacket correlatedPacket = (CorrelatedPacket) serialization;
+    }
     if(goForJumbo){
-      goForJumbo = false;
-      if(queuedUpResponses.size() > 1){
-        System.out.println("queuedUpResponses size = "+queuedUpResponses.size());
-        ByteArrayOutputStream bao = new ByteArrayOutputStream();
-        DataOutputStream dos = new DataOutputStream(bao);
-        int count = 0;
-        while(!queuedUpResponses.isEmpty()){
-          Serialization queuedUpSerializarion = queuedUpResponses.poll();
-          dos.writeInt(queuedUpSerializarion.getSize());
-          dos.writeShort(queuedUpSerializarion.getType());
-          dos.write(queuedUpSerializarion.getBuffer());
-          ++count;
-        }
-        // System.out.println("sending messages in "+(System.currentTimeMillis() - stime));
-        JumboText jumboText = new JumboText();
-        jumboText.setNumberOfItems(count);
-        jumboText.setBytes(bao.toByteArray());
-        responsePartial = new ResponsePartial(jumboText);
-      } else {
-        responsePartial = new ResponsePartial(queuedUpResponses.poll());
-      }
+      writeAccumulatedResponse();
       // create one jumbo package
+    }
+  }
 
-      if(key.isValid()) {
-        key.interestOps(SelectionKey.OP_WRITE | SelectionKey.OP_READ);
-        key.selector().wakeup();
+  private synchronized void writeAccumulatedResponse() throws IOException {
+    if(!goForJumbo){
+      return;
+    }
+    if(queuedUpResponses.isEmpty()){
+      return;
+    }
+    goForJumbo = false;
+    if(queuedUpResponses.size() > 1){
+      ByteArrayOutputStream bao = new ByteArrayOutputStream();
+      DataOutputStream dos = new DataOutputStream(bao);
+      int count = 0;
+      while(!queuedUpResponses.isEmpty()){
+        Serialization queuedUpSerializarion = queuedUpResponses.poll();
+        dos.writeInt(queuedUpSerializarion.getSize());
+        dos.writeShort(queuedUpSerializarion.getType());
+        dos.write(queuedUpSerializarion.getBuffer());
+        ++count;
       }
+      // System.out.println("sending messages in "+(System.currentTimeMillis() - stime));
+      JumboText jumboText = new JumboText();
+      jumboText.setNumberOfItems(count);
+      jumboText.setBytes(bao.toByteArray());
+      totalWrote.addAndGet(count);
+      responsePartial = new ResponsePartial(jumboText);
+    } else {
+      totalWrote.incrementAndGet();
+      responsePartial = new ResponsePartial(queuedUpResponses.poll());
+    }
+    if(key.isValid()) {
+      key.interestOps(SelectionKey.OP_WRITE | SelectionKey.OP_READ);
+      key.selector().wakeup();
     }
   }
 
   // will be executed by request/response thread.
-  void writeResponse(){
+  void writeResponse() throws IOException {
     if(responsePartial != null){
       try {
         responsePartial.tryComplete(sc);
@@ -92,6 +110,7 @@ public class ConnectionContext {
         catch (IOException e) {
           e.printStackTrace();
         }
+        ioe.printStackTrace();
       }
       if (responsePartial.complete()) {
         completeResponse();
@@ -99,12 +118,13 @@ public class ConnectionContext {
     }
   }
 
-  private synchronized void completeResponse() {
+  private synchronized void completeResponse() throws IOException {
     totalResponse.incrementAndGet();
     if(key.isValid()){
       key.interestOps(SelectionKey.OP_READ);
     }
     goForJumbo = true;
+    writeAccumulatedResponse();
   }
 
 
@@ -135,6 +155,7 @@ public class ConnectionContext {
   }
 
   private void closeConnection() throws IOException {
+    System.out.println("killing connection "+sc);
     queuedUpResponses.clear();
     Iterator<Long> keyIterator = sessions.keySet().iterator();
     while (keyIterator.hasNext()) {

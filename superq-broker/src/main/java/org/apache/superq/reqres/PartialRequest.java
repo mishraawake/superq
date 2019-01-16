@@ -65,6 +65,7 @@ public class PartialRequest implements Partial {
       bb = ByteBuffer.allocate(remaining);
       remaining -= readOrThrowException(ssc, bb);
       emptyByte = false;
+      return;
     }
     if(remaining > 0){
       remaining -= readOrThrowException(ssc, bb);

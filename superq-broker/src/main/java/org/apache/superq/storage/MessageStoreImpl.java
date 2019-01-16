@@ -63,6 +63,11 @@ public class MessageStoreImpl<M extends Serialization> implements MessageStore<M
     return false;
   }
 
+  @Override
+  public MessageEnumerator<M> getMessageEnumerator(){
+    return consumerMessageEnumerator;
+  }
+
 
   public static class MessageBrowserEnumerator<M extends Serialization> implements MessageEnumerator<M> {
     private int pageSize = 1000;
@@ -123,6 +128,21 @@ public class MessageStoreImpl<M extends Serialization> implements MessageStore<M
 
     public M nextElement() {
       return message;
+    }
+
+    @Override
+    public boolean moreMessage() {
+      return false;
+    }
+
+    @Override
+    public boolean beingLoaded() {
+      return false;
+    }
+
+    @Override
+    public int memorySize() {
+      return 0;
     }
   }
 
@@ -186,6 +206,21 @@ public class MessageStoreImpl<M extends Serialization> implements MessageStore<M
 
     public M nextElement() {
       return this.message;
+    }
+
+    @Override
+    public boolean moreMessage() {
+      return hasMoreLements;
+    }
+
+    @Override
+    public boolean beingLoaded() {
+      return beingLoaded;
+    }
+
+    @Override
+    public int memorySize() {
+      return messageFetched.size();
     }
   }
 }

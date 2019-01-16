@@ -2,6 +2,8 @@ package com.apache.superq;
 
 import java.io.IOException;
 import java.util.Date;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import javax.jms.DeliveryMode;
 import javax.jms.Destination;
@@ -75,7 +77,7 @@ public class SerializationSupportTest {
     //queueInfo.setId(2);
     //queueInfo.setPacketId(-3);
     jumboText.setNumberOfItems(100);
-    byte[] bytes = new byte[10];
+    byte[] bytes = new byte[77106];
     bytes[9] = 10;
     jumboText.setBytes(bytes);
     JumboText afterSerialization  = new JumboText();
@@ -128,4 +130,15 @@ public class SerializationSupportTest {
     Assert.assertEquals(afterSerialization, textMessage);
   }
 
+
+  @Test
+  public void testExecutor(){
+    ExecutorService executorService = Executors.newFixedThreadPool(100);
+    executorService.execute(new Runnable() {
+      @Override
+      public void run() {
+        System.out.println("Testing");
+      }
+    });
+  }
 }

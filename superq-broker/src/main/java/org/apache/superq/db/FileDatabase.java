@@ -39,7 +39,7 @@ public class FileDatabase<T extends Serialization> {
   }
 
 
-  public boolean appendMessage(T message) throws IOException {
+  public synchronized boolean appendMessage(T message) throws IOException {
     long messageMCIndex = messageRow.append(message);
     IndexEntry entry = new IndexEntry();
     entry.setMessageLocation(messageMCIndex);

@@ -19,8 +19,14 @@ import java.util.Set;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentSkipListSet;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.RejectedExecutionHandler;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import javax.jms.ConnectionConsumer;
 import javax.jms.ConnectionMetaData;
@@ -44,6 +50,7 @@ public class SMQConnection implements javax.jms.Connection {
   private String clientId;
   ConnectionMetaData connectionMetaData;
   ExceptionListener exceptionListener;
+  AtomicInteger threadCount = new AtomicInteger(0);
   AtomicLong sessionIdStore = new AtomicLong(0);
   AtomicLong correlatedIdStore = new AtomicLong(0);
   WiredObjectFactory partialRequestFactory = new ConstArrayWiredObjectFactory();
@@ -59,64 +66,94 @@ public class SMQConnection implements javax.jms.Connection {
   BlockingQueue<Serialization> serializationsQueue = new LinkedBlockingQueue<>();
   SelectionKey key;
   volatile JumboText jumboText;
-  ByteBuffer writeBuffer;
+  volatile ByteBuffer writeBuffer;
   int remaining = 0;
   volatile boolean readyForPackaging = true;
   RequestReader requestReader = new RequestReader();
+  ExecutorService executorService = null;
+  AtomicInteger sentItem = new AtomicInteger(0);
+  NetworkThread networkThread;
 
   public SMQConnection(SocketChannel socketChannel, long connectionId) throws JMSException, IOException {
     this.socketChannel = socketChannel;
     this.connectionId = connectionId;
     selector = Selector.open();
     key = socketChannel.register(selector, SelectionKey.OP_READ);
-    Thread thread = new Thread(new NetworkThread());
+    networkThread = new NetworkThread();
+    Thread thread = new Thread(networkThread);
     thread.start();
     sendConnectionInfo();
   }
 
   private void sendConnectionInfo() throws JMSException {
+
     ConnectionInfo connectionInfo = new ConnectionInfo();
     connectionInfo.setConnectionId(getConnectionId());
-    connectionInfo.setPacketId(correlatedIdStore.incrementAndGet());
     sendSync(connectionInfo);
   }
 
   public void sendSync(SMQMessage message, int timeout) throws JMSException {
     try {
-      writeSerialization(message, true);
-      messagesAckAwaited.add(Long.valueOf(message.getJMSMessageID()));
-      long stime = System.currentTimeMillis();
-      while (messagesAckAwaited.contains(Long.valueOf(message.getJMSMessageID()))) {
-        try {
-          synchronized (sendAwait) {
-            sendAwait.wait(timeout);
-          }
-        }
-        catch (InterruptedException e) {
-        }
-      }
+      writeSerialization(message);
+      messagesAckAwaited.add(message.getJmsMessageLongId());
+      waitForNotify(message.getJmsMessageLongId(), timeout);
     } catch (IOException e){
       handleIOException(e);
     }
   }
 
-  public void sendSync(CorrelatedPacket packet, int timeout) throws JMSException {
-    try {
-      packet.setPacketId(correlatedIdStore.incrementAndGet());
-      writeSerialization(packet, true);
-      correlatedsAckAwaited.add(Long.valueOf(packet.getPacketId()));
-      long stime = System.currentTimeMillis();
-      while (correlatedsAckAwaited.contains(Long.valueOf(packet.getPacketId()))) {
+  private void waitForNotify(Long messageId, int timeout) throws JMSException {
+    synchronized (sendAwait){
+      while (messagesAckAwaited.contains(messageId)) {
         try {
-          synchronized (sendAwait) {
-            sendAwait.wait(timeout);
-          }
+          sendAwait.wait(timeout);
         }
         catch (InterruptedException e) {
         }
       }
+    }
+  }
+
+  public ExecutorService getSessionExecutor(long sessionID){
+    if(executorService == null){
+      executorService = Executors.newFixedThreadPool(1000, new ThreadFactory() {
+        @Override
+        public Thread newThread(Runnable r) {
+          return new Thread( r,"Session Consumer Thread, SessionId "+sessionID + "  "+threadCount.incrementAndGet());
+        }
+      });
+
+      ThreadPoolExecutor threadPoolExecutor = (ThreadPoolExecutor)executorService;
+      threadPoolExecutor.setRejectedExecutionHandler(new RejectedExecutionHandler() {
+        @Override
+        public void rejectedExecution(Runnable r, ThreadPoolExecutor executor) {
+          System.out.println("accessive message are being consumed, rejecting");
+        }
+      });
+    }
+    return executorService;
+  }
+
+  public void sendSync(CorrelatedPacket packet, int timeout) throws JMSException {
+    try {
+      packet.setPacketId(correlatedIdStore.incrementAndGet());
+      correlatedsAckAwaited.add(packet.getPacketId());
+      writeSerialization(packet);
+      waitToNotifyForCorrelated(packet, timeout);
     } catch (IOException e){
       handleIOException(e);
+    }
+  }
+
+  private void waitToNotifyForCorrelated(CorrelatedPacket packet, int timeout) {
+    while (correlatedsAckAwaited.contains(Long.valueOf(packet.getPacketId()))) {
+      try {
+        synchronized (sendAwait) {
+          sendAwait.wait(timeout);
+        }
+      }
+      catch (InterruptedException e) {
+      }
     }
   }
 
@@ -198,7 +235,9 @@ public class SMQConnection implements javax.jms.Connection {
   @Override
   public void close() throws JMSException {
     try {
+      selector.close();
       socketChannel.close();
+
     }
     catch (IOException e) {
       handleIOException(e);
@@ -229,7 +268,7 @@ public class SMQConnection implements javax.jms.Connection {
 
   public void sendAsync(SMQMessage message) throws JMSException {
     try {
-      writeSerialization(message, false);
+      writeSerialization(message);
     } catch (IOException e){
       handleIOException(e);
     }
@@ -248,13 +287,13 @@ public class SMQConnection implements javax.jms.Connection {
    // System.out.println("sending messages in "+(System.currentTimeMillis() - stime));
     JumboText text = new JumboText();
     text.setBytes(bao.toByteArray());
-    writeSerialization(text, true);
+    writeSerialization(text);
    // System.out.println("sending messages in "+(System.currentTimeMillis() - stime));
   }
 
   public void sendAsync(Serialization packet) throws JMSException {
     try {
-      writeSerialization(packet, false);
+      writeSerialization(packet);
     } catch (IOException e){
       handleIOException(e);
     }
@@ -271,13 +310,8 @@ public class SMQConnection implements javax.jms.Connection {
     return sessionMap.getOrDefault(sessionId, null);
   }
 
-  private synchronized void writeSerialization(Serialization packet, boolean force) throws IOException{
+  private synchronized void writeSerialization(Serialization packet) throws IOException{
     serializationsQueue.add(packet);
-    if(force){
-      while(!readyForPackaging){
-        sleep(10);
-      }
-    }
     if(readyForPackaging){
       writeResponse(socketChannel);
     }
@@ -299,22 +333,26 @@ public class SMQConnection implements javax.jms.Connection {
   private void infiniteSelect() throws IOException {
     while(true){
       int selectResult = selector.select();
-      Iterator<SelectionKey> iterator = selector.selectedKeys().iterator();
-      while (iterator.hasNext()) {
-        SelectionKey next = iterator.next();
-        iterator.remove();
-        SelectableChannel selectableChannel = next.channel();
-        if (!next.isValid()) {
-          continue;
+      if(selector.isOpen()) {
+        Iterator<SelectionKey> iterator = selector.selectedKeys().iterator();
+        while (iterator.hasNext()) {
+          SelectionKey next = iterator.next();
+          iterator.remove();
+          SelectableChannel selectableChannel = next.channel();
+          if (!next.isValid()) {
+            continue;
+          }
+          if (next.isValid() && next.isReadable()) {
+            SocketChannel sc = (SocketChannel) selectableChannel;
+            readRequest(sc);
+          }
+          if (next.isValid() && next.isWritable()) {
+            SocketChannel sc = (SocketChannel) selectableChannel;
+            writeJumbo(sc);
+          }
         }
-        if (next.isValid() && next.isReadable()) {
-          SocketChannel sc = (SocketChannel) selectableChannel;
-          readRequest(sc);
-        }
-        if (next.isValid() && next.isWritable()) {
-          SocketChannel sc = (SocketChannel) selectableChannel;
-          writeJumbo(sc);
-        }
+      } else {
+        return;
       }
     }
   }
@@ -325,6 +363,8 @@ public class SMQConnection implements javax.jms.Connection {
       writeBuffer = ByteBuffer.allocate(remaining);
       writeBuffer.putInt(jumboText.getBuffer().length);
       writeBuffer.putShort(jumboText.getType());
+
+
       writeBuffer.put(jumboText.getBuffer());
       writeBuffer.flip();
       int write = sc.write(writeBuffer);
@@ -344,20 +384,23 @@ public class SMQConnection implements javax.jms.Connection {
         }
         readyForPackaging = true;
       }
+      writeResponse(sc);
     }
   }
 
-  private void writeResponse(SocketChannel sc) throws IOException {
-
-    List<Serialization> serializationList = new ArrayList<>();
-    synchronized (this) {
-      while (!serializationsQueue.isEmpty()) {
-        serializationList.add(serializationsQueue.poll());
-      }
-      if(serializationList.size() > 0)
-        readyForPackaging = false;
+  private synchronized void writeResponse(SocketChannel sc) throws IOException {
+    if(!readyForPackaging){
+      return;
     }
-
+    if(!serializationsQueue.isEmpty()){
+      readyForPackaging = false;
+    } else {
+      return;
+    }
+    List<Serialization> serializationList = new ArrayList<>();
+    while (!serializationsQueue.isEmpty()) {
+      serializationList.add(serializationsQueue.poll());
+    }
     if(serializationList.size() > 0)
       createPacketAndWrite(serializationList);
   }
@@ -366,13 +409,6 @@ public class SMQConnection implements javax.jms.Connection {
     ByteArrayOutputStream bao = new ByteArrayOutputStream();
     DataOutputStream dos = new DataOutputStream(bao);
     for(Serialization serialization: serializationList){
-      if(serialization instanceof CorrelatedPacket){
-        CorrelatedPacket correlatedPacket = (CorrelatedPacket)serialization;
-        correlatedPacket.setPacketId(correlatedIdStore.incrementAndGet());
-      }
-      if(serialization instanceof CommitTransaction){
-        System.out.println("sending commit packet "+ ((CommitTransaction)serialization).getTransactionId());
-      }
       dos.writeInt(serialization.getSize());
       dos.writeShort(serialization.getType());
       dos.write(serialization.getBuffer());
@@ -382,6 +418,7 @@ public class SMQConnection implements javax.jms.Connection {
     jumboText = new JumboText();
     jumboText.setBytes(bao.toByteArray());
     jumboText.setNumberOfItems(serializationList.size());
+    sentItem.addAndGet(jumboText.getNumberOfItems());
     if(key != null)
     synchronized (key) {
       if (key.isValid()) {
@@ -410,7 +447,14 @@ public class SMQConnection implements javax.jms.Connection {
         short type = dataInputStream.readShort();
         byte[] bytes = new byte[length];
         dataInputStream.read(bytes);
-        SMQTextMessage textMessage = new SMQTextMessage();
+        Serialization textMessage = null;
+        try {
+          textMessage = (Serialization) partialRequestFactory.getInitialPartialRequest(type).newInstance();
+        }
+        catch (InstantiationException | IllegalAccessException e) {
+          throw new IOException(e);
+        }
+
         textMessage.acceptByteBuffer(bytes);
         handleIncomingPacket(textMessage);
         ++count;
@@ -433,8 +477,8 @@ public class SMQConnection implements javax.jms.Connection {
     } else if(packet instanceof CorrelatedPacket){
       CorrelatedPacket correlatedPacket = (CorrelatedPacket)packet;
       correlatedPacket.getPacketId();
-      SMQConnection.this.correlatedsAckAwaited.remove(correlatedPacket.getPacketId());
       synchronized (sendAwait) {
+        SMQConnection.this.correlatedsAckAwaited.remove(correlatedPacket.getPacketId());
         sendAwait.notifyAll();
       }
     }
@@ -442,10 +486,11 @@ public class SMQConnection implements javax.jms.Connection {
 
   class NetworkThread implements Runnable {
 
+
     @Override
     public void run() {
 
-      System.out.println("NetworkThread thread started");
+    //  System.out.println("NetworkThread thread started "+SMQConnection.this.getConnectionId());
       try {
         infiniteSelect();
       }
@@ -459,31 +504,7 @@ public class SMQConnection implements javax.jms.Connection {
     SMQMessage message = packet;
     SMQSession session = SMQConnection.this.getSession(message.getSessionId());
     AutoCloseable mc = session.getConsumer(message.getConsumerId());
-    if(mc instanceof MessageConsumer){
-      SMQOldConsumer consumer = (SMQOldConsumer)mc;
-      try {
-        consumer.getMessageListener().onMessage(message);
-      } catch (JMSException e){
-
-      }
-      try {
-        if(session.getTransacted()){
-          // do nothing
-        }else if (session.getAcknowledgeMode() == Session.AUTO_ACKNOWLEDGE || session.getAcknowledgeMode() == Session.DUPS_OK_ACKNOWLEDGE) {
-          ConsumerAck consumerAck = new ConsumerAck();
-          consumerAck.setMessageId(message.getJmsMessageLongId());
-          consumerAck.setConnectionId(this.getConnectionId());
-          consumerAck.setSessionId(session.getId());
-          consumerAck.setQid(consumer.getQueue().getId());
-          consumerAck.setId(message.getConsumerId());
-          sendAsync(consumerAck);
-        }
-      } catch (JMSException e){
-      }
-    } else {
-      SQQueueBrowser consumer = (SQQueueBrowser)mc;
-      consumer.consumer(packet);
-    }
+    session.deliver(message);
   }
 
   class RequestReader {
@@ -514,6 +535,7 @@ public class SMQConnection implements javax.jms.Connection {
         bb = ByteBuffer.allocate(remaining);
         remaining -= readOrThrowException(ssc, bb);
         emptyByte = false;
+        return;
       }
       if(remaining > 0){
         remaining -= readOrThrowException(ssc, bb);

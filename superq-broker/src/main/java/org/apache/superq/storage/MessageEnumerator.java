@@ -8,4 +8,7 @@ import org.apache.superq.Task;
 public interface MessageEnumerator<M extends Serialization> {
   public boolean hasMoreElements(Task task) throws IOException;
   public M nextElement();
+  public boolean moreMessage();
+  public boolean beingLoaded();
+  public int memorySize();
 }

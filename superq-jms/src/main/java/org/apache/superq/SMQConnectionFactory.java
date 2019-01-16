@@ -1,6 +1,7 @@
 package org.apache.superq;
 
 import java.io.IOException;
+import java.net.BindException;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.nio.channels.SocketChannel;
@@ -25,20 +26,36 @@ public class SMQConnectionFactory implements ConnectionFactory {
   @Override
   public Connection createConnection() throws JMSException {
     try {
-      SocketChannel socketChannel = SocketChannel.open();
-      socketChannel.configureBlocking(false);
-      boolean connected =  socketChannel.connect(new InetSocketAddress(this.host, this.port));
-      socketChannel.finishConnect();
-      connected = socketChannel.isConnected();
-      socketChannel.socket().setSendBufferSize(1024*1024*10);
-      socketChannel. socket().setTcpNoDelay(false);
-      SMQConnection connection = new SMQConnection(socketChannel, connectionId.incrementAndGet());
+      SMQConnection connection = new SMQConnection(connect(), connectionId.incrementAndGet());
       return connection;
-    } catch (IOException ioe){
+    } catch (IOException | InterruptedException ioe){
       JMSException jmse =  new JMSException("Broker host could not be found");
       jmse.setLinkedException(ioe);
       throw jmse;
     }
+  }
+
+  private SocketChannel connect() throws IOException, InterruptedException {
+    int count = 0;
+    BindException betoThrow = null;
+    while(count++  < 1000) {
+      try {
+        SocketChannel socketChannel = SocketChannel.open();
+        socketChannel.configureBlocking(false);
+        boolean connected = socketChannel.connect(new InetSocketAddress(this.host, this.port));
+        while(!socketChannel.finishConnect()){
+          Thread.yield();
+        }
+        socketChannel.socket().setSendBufferSize(1024*1024*10);
+        socketChannel. socket().setTcpNoDelay(false);
+        return socketChannel;
+      }
+      catch (BindException be) {
+        betoThrow = be;
+        Thread.sleep(10);
+      }
+    }
+    throw betoThrow;
   }
 
   @Override
