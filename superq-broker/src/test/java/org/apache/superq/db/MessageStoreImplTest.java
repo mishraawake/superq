@@ -15,9 +15,9 @@ public class MessageStoreImplTest extends AbstractTest {
   public void messageGet() throws IOException, JMSException {
     final int totalMessage = 1000;
     createMessage(totalMessage);
-    MessageStoreImpl store = new MessageStoreImpl(qname, fileDatabase);
+    MessageStoreImpl<SMQMessage> store = new MessageStoreImpl<SMQMessage>(fileDatabase, null);
     int numberOfMessages = 0;
-    while(store.hasMoreMessage()){
+    while(store.hasMoreMessage(null)){
       SMQMessage message = store.getNextMessage();
       if(message != null){
         ++numberOfMessages;
@@ -26,7 +26,7 @@ public class MessageStoreImplTest extends AbstractTest {
     Assert.assertEquals(numberOfMessages, totalMessage);
     createMessage(10);
     numberOfMessages = 0;
-    while(store.hasMoreMessage()){
+    while(store.hasMoreMessage(null)){
       SMQMessage message = store.getNextMessage();
       if(message != null){
         ++numberOfMessages;
@@ -40,10 +40,10 @@ public class MessageStoreImplTest extends AbstractTest {
   public void messageBrowse() throws IOException, JMSException {
     final int totalMessage = 100;
     createMessage(totalMessage);
-    MessageStoreImpl store = new MessageStoreImpl(qname, fileDatabase);
+    MessageStoreImpl<SMQMessage> store = new MessageStoreImpl<SMQMessage> (fileDatabase, null);
     int numberOfMessages = 0;
-    MessageEnumerator enumerator = store.browserEnumerator();
-    while(enumerator.hasMoreElements()){
+    MessageEnumerator<SMQMessage> enumerator = store.browserEnumerator(SMQMessage.class);
+    while(enumerator.hasMoreElements(null)){
       SMQMessage message = enumerator.nextElement();
       if(message != null){
         ++numberOfMessages;
@@ -51,8 +51,8 @@ public class MessageStoreImplTest extends AbstractTest {
     }
     Assert.assertEquals(numberOfMessages, totalMessage + 1);
     numberOfMessages = 0;
-    enumerator = store.browserEnumerator();
-    while(enumerator.hasMoreElements()){
+    enumerator = store.browserEnumerator(SMQMessage.class);
+    while(enumerator.hasMoreElements(null)){
       SMQMessage message = enumerator.nextElement();
       if(message != null){
         ++numberOfMessages;

@@ -2,12 +2,15 @@ package com.apache.superq;
 
 import java.io.IOException;
 import java.util.Date;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import javax.jms.DeliveryMode;
 import javax.jms.Destination;
 import javax.jms.JMSException;
 
 import org.apache.superq.ConnectionInfo;
+import org.apache.superq.JumboText;
 import org.apache.superq.QueueInfo;
 import org.apache.superq.SMQDestination;
 import org.apache.superq.SMQTextMessage;
@@ -69,6 +72,23 @@ public class SerializationSupportTest {
   }
 
   @Test
+  public void serializeJumbo() throws IOException, JMSException {
+    JumboText jumboText = new JumboText();
+    //queueInfo.setId(2);
+    //queueInfo.setPacketId(-3);
+    jumboText.setNumberOfItems(100);
+    byte[] bytes = new byte[77106];
+    bytes[9] = 10;
+    jumboText.setBytes(bytes);
+    JumboText afterSerialization  = new JumboText();
+    afterSerialization.acceptByteBuffer(jumboText.getBuffer());
+    System.out.println(afterSerialization);
+    jumboText = new JumboText();
+    jumboText.acceptByteBuffer(afterSerialization.getBuffer());
+    Assert.assertEquals(afterSerialization, jumboText);
+  }
+
+  @Test
   public void serializeMessageText() throws IOException, JMSException {
     SMQTextMessage textMessage = new SMQTextMessage();
     textMessage.setText("My text pankaj");
@@ -110,4 +130,15 @@ public class SerializationSupportTest {
     Assert.assertEquals(afterSerialization, textMessage);
   }
 
+
+  @Test
+  public void testExecutor(){
+    ExecutorService executorService = Executors.newFixedThreadPool(100);
+    executorService.execute(new Runnable() {
+      @Override
+      public void run() {
+        System.out.println("Testing");
+      }
+    });
+  }
 }

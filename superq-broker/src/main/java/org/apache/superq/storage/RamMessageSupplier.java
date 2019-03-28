@@ -6,7 +6,7 @@ import java.util.concurrent.LinkedBlockingDeque;
 
 import org.apache.superq.SMQMessage;
 
-public class RamMessageSupplier implements MessageSupplier {
+public class RamMessageSupplier implements MessageSupplier<SMQMessage> {
 
   MessageStore store;
   String qname;
@@ -26,11 +26,6 @@ public class RamMessageSupplier implements MessageSupplier {
     if(messageQueue.size() > 0){
       return messageQueue.poll();
     }
-    return null;
-  }
-
-  @Override
-  public MessageEnumerator browserEnumerator() throws IOException {
     return null;
   }
 

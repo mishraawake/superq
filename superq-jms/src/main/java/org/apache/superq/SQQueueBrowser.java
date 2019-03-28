@@ -14,9 +14,11 @@ public class SQQueueBrowser implements QueueBrowser {
   private BlockingQueue<SMQMessage> messages = new LinkedBlockingQueue<>();
   BrowserMessageEnumerator browserMessageEnumerator;
   private Queue queue;
+  private String messageSelector;
 
 
-  public SQQueueBrowser(){
+  public SQQueueBrowser(String messageSelector){
+    this.messageSelector = messageSelector;
     this.browserMessageEnumerator = new BrowserMessageEnumerator(this);
   }
 
@@ -44,7 +46,7 @@ public class SQQueueBrowser implements QueueBrowser {
 
   @Override
   public String getMessageSelector() throws JMSException {
-    return null;
+    return this.messageSelector;
   }
 
   @Override

@@ -25,52 +25,52 @@ public class FileMetadata {
                           0, lastIndex);
   }
 
-  public long getProcessedSize() {
+  public synchronized long getProcessedSize() {
     mmBuffer.position(processed);
     return mmBuffer.getLong();
   }
 
-  public void setProcessedSize(long processedSize) {
+  public synchronized void setProcessedSize(long processedSize) {
     mmBuffer.position(processed);
     mmBuffer.putLong(processedSize);
   }
 
-  public long getSize() {
+  public synchronized long getSize() {
     mmBuffer.position(size);
     return mmBuffer.getLong();
   }
 
-  public void setSize(long size) {
+  public synchronized void setSize(long size) {
     mmBuffer.position(this.size);
     mmBuffer.putLong(size);
   }
 
-  public byte getType() {
+  public synchronized byte getType() {
     mmBuffer.position(this.type);
     return mmBuffer.get();
   }
 
-  public void setType(byte size) {
+  public synchronized void setType(byte size) {
     mmBuffer.position(this.type);
     mmBuffer.put(size);
   }
 
-  public long messageOffset() {
+  public synchronized long messageOffset() {
     mmBuffer.position(this.messageOffset);
     return mmBuffer.getLong();
   }
 
-  public void messageOffset(long offset) {
+  public synchronized void messageOffset(long offset) {
     mmBuffer.position(this.messageOffset);
     mmBuffer.putLong(offset);
   }
 
-  public long leftoverOffset() {
+  public synchronized long leftoverOffset() {
     mmBuffer.position(this.leftOver);
     return mmBuffer.getLong();
   }
 
-  public void leftoverOffset(long offset) {
+  public synchronized void leftoverOffset(long offset) {
     mmBuffer.position(this.leftOver);
     mmBuffer.putLong(offset);
   }

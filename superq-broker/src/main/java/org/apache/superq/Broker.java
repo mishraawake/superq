@@ -1,20 +1,29 @@
 package org.apache.superq;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import javax.jms.Destination;
 import javax.jms.JMSException;
+import javax.management.MBeanServer;
+import javax.management.ObjectName;
 
 import org.apache.superq.db.FileDatabase;
+import org.apache.superq.db.FileDatabaseFactory;
 import org.apache.superq.db.FileDatabaseFactoryImpl;
 import org.apache.superq.db.InfoSizeableFactory;
+import org.apache.superq.db.SizeableFactory;
 import org.apache.superq.incoming.SBProducerContext;
 import org.apache.superq.io.IOAsyncUtil;
 import org.apache.superq.network.ConnectionContext;
 import org.apache.superq.network.SessionContext;
 import org.apache.superq.outgoing.SBConsumer;
+import org.apache.superq.storage.IOMessageStoreFilter;
+import org.apache.superq.storage.MessageStore;
+import org.apache.superq.storage.MessageStoreImpl;
+import org.apache.superq.storage.QueueStats;
 import org.apache.superq.storage.SBQueue;
 import org.apache.superq.storage.SBQueueDefault;
 import org.apache.superq.storage.TransactionalStore;
@@ -23,16 +32,24 @@ public class Broker {
 
   CallbackExecutor callbackExecutor;
   Map<Integer, SBQueue<SMQMessage>> messageQueueMap = new ConcurrentHashMap<>();
-  Map<Integer, QueueInfo> qinfoCache = new ConcurrentHashMap<>();
   Map<String, ConnectionContext> allConnectionContext = new ConcurrentHashMap<>();
   private ThreadLocal<Boolean> callbackThread = new ThreadLocal<Boolean>(){
     @Override protected Boolean initialValue() {
       return false;
     }
   };
+  Map<String, MessageStore<QueueInfo>> infoStores = new ConcurrentHashMap<>();
+  Map<String, MessageStore<SMQMessage>> mainStores = new ConcurrentHashMap<>();
+  volatile MessageStore<QueueInfo> mainInfo;
+  MBeanServer mbs;
+
 
   public Broker(){
     callbackExecutor = new CallbackExecutor(callbackThread);
+  }
+
+  public void setMBeanServer(MBeanServer mbs){
+    this.mbs = mbs;
   }
 
   public void start(){
@@ -48,53 +65,85 @@ public class Broker {
     callbackExecutor.addTask(task);
   }
 
-  public synchronized QueueInfo getQInfo(String qname, FileDatabase<QueueInfo> fd ) throws IOException, JMSException {
-    List<QueueInfo> infos = fd.getAllMessage();
-    for (int index = 0; index < infos.size(); index++) {
-      QueueInfo info = infos.get(index);
-      if(info.getQueueName().equals(qname)){
-        return info;
+  public MessageStore<SMQMessage> getMainMessageStore(String qname) throws IOException {
+    if(!mainStores.containsKey(qname)){
+      MessageStore<SMQMessage> messageStore = new IOMessageStoreFilter<>(new MessageStoreImpl<SMQMessage>
+              (FileDatabaseFactoryImpl.getInstance().getOrInitializeMainDatabase(qname), this), this);
+      mainStores.putIfAbsent(qname, messageStore);
+    }
+    return mainStores.get(qname);
+  }
+
+  public MessageStore<QueueInfo> getInfoMessageStore(String qname) throws IOException {
+    if(!infoStores.containsKey(qname)){
+      FileDatabaseFactory<QueueInfo> fileDatabaseFactory = FileDatabaseFactoryImpl.<QueueInfo>getInstance();
+      MessageStore<QueueInfo> messageStore = new IOMessageStoreFilter<>(new MessageStoreImpl<QueueInfo>(fileDatabaseFactory.
+              getInfoDatabase(qname, new InfoSizeableFactory<QueueInfo>()), this), this);
+      infoStores.putIfAbsent(qname, messageStore);
+    }
+    return infoStores.get(qname);
+  }
+
+  public MessageStore<QueueInfo> getInfoMessageStore() throws IOException {
+    if(mainInfo == null){
+      mainInfo = new IOMessageStoreFilter<>(new MessageStoreImpl<QueueInfo>(FileDatabaseFactoryImpl.<QueueInfo>getInstance().
+              getInfoDatabase(new InfoSizeableFactory<QueueInfo>()), this), this);
+    }
+    return mainInfo;
+  }
+
+  public synchronized QueueInfo getQInfo(String qname, MessageStore<QueueInfo> messageStore ) throws IOException, JMSException {
+    while(messageStore.hasMoreMessage(null)){
+      QueueInfo queueInfo = messageStore.getNextMessage();
+      if(queueInfo.getQueueName().equals(qname)){
+        return queueInfo;
       }
     }
     return null;
   }
 
-  public synchronized QueueInfo getQInfo(int qindex, FileDatabase<QueueInfo> fd ) throws IOException, JMSException {
-    List<QueueInfo> infos = fd.getAllMessage();
-    for (int index = 0; index < infos.size(); index++) {
-      QueueInfo info = infos.get(index);
-      if(info.getId() == qindex){
-        return info;
+  public synchronized QueueInfo getQInfo(int qindex, MessageStore<QueueInfo> messageStore ) throws IOException, JMSException {
+    while(messageStore.hasMoreMessage(null)){
+      QueueInfo queueInfo = messageStore.getNextMessage();
+      if(queueInfo.getId() == qindex){
+        return queueInfo;
       }
     }
     return null;
   }
 
   public void saveQueue(QueueInfo qinfo) throws JMSException, IOException {
-    FileDatabase<QueueInfo> fd = FileDatabaseFactoryImpl.getInstance().
-            getInfoDatabase( new InfoSizeableFactory());
-    QueueInfo queueInfo = getQInfo(qinfo.getQueueName(), fd);
-    FileDatabase<SMQMessage> mainDatabase = FileDatabaseFactoryImpl.getInstance().getOrInitializeMainDatabase(qinfo.getQueueName());
+    QueueInfo queueInfo = getQInfo(qinfo.getQueueName(), getInfoMessageStore());
+    MessageStore<SMQMessage> mainDatabase = getMainMessageStore(qinfo.getQueueName());
     if(queueInfo == null){
-      fd.appendMessage(qinfo);
-      qinfoCache.putIfAbsent(qinfo.getId(), qinfo);
-      messageQueueMap.putIfAbsent(qinfo.getId(), new SBQueueDefault(this, qinfo, mainDatabase));
+      getInfoMessageStore().addMessage(qinfo);
+      registerQueue(qinfo);
     } else {
-      messageQueueMap.putIfAbsent(qinfo.getId(), new SBQueueDefault(this, qinfo, mainDatabase));
+      registerQueue(qinfo);
     }
   }
 
   public void registerQueue(QueueInfo qinfo) throws JMSException, IOException {
-    FileDatabase<SMQMessage> mainDatabase = FileDatabaseFactoryImpl.getInstance().getOrInitializeMainDatabase(qinfo.getQueueName());
-    messageQueueMap.putIfAbsent(qinfo.getId(), new SBQueueDefault(this, qinfo, mainDatabase));
+    SBQueue<SMQMessage> messageSBQueue = messageQueueMap.putIfAbsent(qinfo.getId(), new SBQueueDefault(
+            this, qinfo, getMainMessageStore(qinfo.getQueueName())));
+    if(messageSBQueue == null && mbs != null){
+      registerQueueInMBean(messageQueueMap.get(qinfo.getId()));
+    }
+  }
+
+  private void registerQueueInMBean(SBQueue<SMQMessage> smqMessageSBQueue) {
+    try {
+      QueueStats queueStats = new QueueStats(smqMessageSBQueue);
+      ObjectName mxbeanName = new ObjectName("org.apache.superq:type=QueueStats");
+      mbs.registerMBean(queueStats, mxbeanName);
+    } catch (Exception e){
+      e.printStackTrace();
+    }
   }
 
 
   public QueueInfo getQueue(String qname) throws JMSException, IOException {
-    FileDatabase<QueueInfo> fd = FileDatabaseFactoryImpl.getInstance().
-            getInfoDatabase(qname, new InfoSizeableFactory());
-    QueueInfo queueInfo = getQInfo(qname, fd);
-    return queueInfo;
+    return getQInfo(qname, getInfoMessageStore());
   }
 
   public SBQueue<SMQMessage> getQueue(int qindex) throws JMSException, IOException {
@@ -102,14 +151,7 @@ public class Broker {
   }
 
   public QueueInfo getQueueInfo(int qindex) throws JMSException, IOException {
-    if(qinfoCache.containsKey(qindex)){
-      return qinfoCache.get(qindex);
-    }
-    FileDatabase<QueueInfo> fd = FileDatabaseFactoryImpl.getInstance().
-            getInfoDatabase(new InfoSizeableFactory());
-    QueueInfo queueInfo = getQInfo(qindex, fd);
-    qinfoCache.putIfAbsent(qindex, queueInfo);
-    return queueInfo;
+    return messageQueueMap.get(qindex).getQInfo();
   }
 
   public void enqueueFileIo(Task task, Task callback) {
@@ -145,7 +187,7 @@ public class Broker {
 
   public void removeConsumer(ConsumerInfo consumerInfo) throws IOException {
     SBQueue<SMQMessage> queue = getSBQueue(consumerInfo.getQid());
-    queue.removeConsumer(consumerInfo.getId());
+    queue.removeConsumer(consumerInfo);
   }
 
   public void removeConnection(String connectionId){
@@ -154,5 +196,10 @@ public class Broker {
 
   public void setAllConnectionContext(Map<String, ConnectionContext> allConnectionContext) {
     this.allConnectionContext = allConnectionContext;
+  }
+
+  public void pullMessage(PullMessage pullMessage) throws IOException {
+    SBQueue<SMQMessage> queue = getSBQueue(pullMessage.getQid());
+    queue.pullMessage(pullMessage);
   }
 }

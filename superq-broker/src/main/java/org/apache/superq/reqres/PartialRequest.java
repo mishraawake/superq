@@ -8,6 +8,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 import org.apache.superq.Broker;
 import org.apache.superq.ConstArrayWiredObjectFactory;
+import org.apache.superq.CorrelatedPacket;
 import org.apache.superq.WiredObjectFactory;
 import org.apache.superq.Serialization;
 import org.apache.superq.Task;
@@ -28,8 +29,10 @@ public class PartialRequest implements Partial {
   ByteBuffer size = ByteBuffer.allocate(INT_PLUS_MESSAGE_TYE);
   WiredObjectFactory rf = new ConstArrayWiredObjectFactory();
   private PartialRequest partialRequest = null;
+  private boolean emptyByte = true;
   short messageType;
   static Map<String, RequestHandler> handlerObject = new ConcurrentHashMap<>();
+  long stime = System.currentTimeMillis();
 
   static {
     for(Class classToMap : WiredObjectFactory.classTypes ){
@@ -45,34 +48,45 @@ public class PartialRequest implements Partial {
     }
   }
 
-  protected ByteBuffer bb;
+  protected ByteBuffer backingArray;
 
   public void tryComplete(SocketChannel ssc) throws IOException {
 
     if(!startedReading){
+      stime = System.currentTimeMillis();
       readOrThrowException(ssc, size);
+     // System.out.println("Accept time1 "+(System.currentTimeMillis() - stime));
       startedReading = true;
       return;
     }
     if(size.position() < INT_PLUS_MESSAGE_TYE){
       readOrThrowException(ssc, size);
+     // System.out.println("Accept time2 "+(System.currentTimeMillis() - stime));
       return;
-    } else if(bb == null) {
+    } else if(emptyByte) {
+     // System.out.println("Accept time3 "+(System.currentTimeMillis() - stime));
       size.flip();
       remaining = size.getInt();
       messageType = size.getShort();
-      bb = ByteBuffer.allocate(remaining);
-      remaining -= readOrThrowException(ssc, bb);
+      backingArray = ByteBuffer.allocate(remaining);
+      remaining -= readOrThrowException(ssc, backingArray);
+      emptyByte = false;
+      //if((System.currentTimeMillis() - stime) > 10)
+       // System.out.println("Accept time3 "+(System.currentTimeMillis() - stime));
+      return;
     }
     if(remaining > 0){
-      remaining -= readOrThrowException(ssc, bb);
+      remaining -= readOrThrowException(ssc, backingArray);
+     // System.out.println("Accept time4 "+(System.currentTimeMillis() - stime));
     } else {
-      bb.flip();
+      backingArray.flip();
     }
   }
 
   protected int readOrThrowException(SocketChannel ssc, ByteBuffer bb) throws IOException {
+    long stime = System.currentTimeMillis();
     int readBytes = ssc.read(bb);
+   // System.out.println("Raw read time " + (System.currentTimeMillis() - stime));
     if(readBytes < 0){
       throw new IOException("Channel "+ssc);
     }
@@ -85,15 +99,36 @@ public class PartialRequest implements Partial {
 
   @Override
   public Task handle(final ConnectionContext context) throws IOException {
-    return new Task(){
-      @Override
-      public void perform() throws Exception {
-        Class classOfMessage = rf.getInitialPartialRequest(messageType);
-        Serialization instantiate = (Serialization)classOfMessage.newInstance();
-        instantiate.acceptByteBuffer(bb.array());
-        handlerObject.get(classOfMessage.getName()).handle(instantiate, context);
+    try {
+      startedReading = false;
+      remaining = INT_PLUS_MESSAGE_TYE + 1;
+      size = ByteBuffer.allocate(INT_PLUS_MESSAGE_TYE);
+      emptyByte = true;
+      byte[] array = backingArray.array();
+     // System.out.println("messageType = " + messageType);
+      Class classOfMessage = rf.getInitialPartialRequest(messageType);
+      final Serialization instantiate = (Serialization) classOfMessage.newInstance();
+
+      synchronized (PartialRequest.this) {
+        instantiate.acceptByteBuffer(array);
       }
-    };
+     // System.out.println("Accept time "+(System.currentTimeMillis() - stime));
+      if(instantiate instanceof CorrelatedPacket) {
+        CorrelatedPacket packet = (CorrelatedPacket) instantiate;
+        if (System.currentTimeMillis() - packet.getDebugTime() > 1) {
+          //System.out.println("Debug time in handle = " + (System.currentTimeMillis() - packet.getDebugTime()));
+        }
+      }
+      Task task = new Task() {
+        @Override
+        public void perform() throws Exception {
+          handlerObject.get(classOfMessage.getName()).handle(instantiate, context);
+        }
+      };
+      return task;
+    } catch (Exception e){
+      throw new IOException(e);
+    }
   }
 
   public BrokerServer getSer() {

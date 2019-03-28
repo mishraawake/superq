@@ -35,6 +35,7 @@ public class ProduceAck extends SerializationSupport{
 
   @Override
   public void serializeFields(DataOutputStream dos) throws IOException {
+    super.serializeFields(dos);
     serializeLong(dos, sessionId);
     serializeLong(dos, producerId);
     serializeLong(dos, messageId);
@@ -42,6 +43,7 @@ public class ProduceAck extends SerializationSupport{
 
   @Override
   public void deSerializeFields(DataInputStream dis) throws IOException {
+    super.deSerializeFields(dis);
     sessionId = deSerializeLong(dis);
     producerId = deSerializeLong(dis);
     messageId = deSerializeLong(dis);

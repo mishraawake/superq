@@ -5,7 +5,7 @@ import java.io.DataOutputStream;
 import java.io.IOException;
 import java.util.Objects;
 
-public class SessionInfo extends SerializationSupport {
+public class SessionInfo extends CorrelatedPacket {
 
   long sessionId;
   long connectionId;

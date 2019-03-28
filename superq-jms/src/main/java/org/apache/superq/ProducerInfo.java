@@ -4,7 +4,7 @@ import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 
-public class ProducerInfo extends SerializationSupport{
+public class ProducerInfo extends CorrelatedPacket{
 
   private long id;
   private long sessionId;

@@ -1,5 +1,6 @@
 package org.apache.superq;
 
+import java.io.IOException;
 import java.util.concurrent.atomic.AtomicInteger;
 import javax.jms.Connection;
 import javax.jms.DeliveryMode;
@@ -13,7 +14,7 @@ import javax.jms.Session;
 import javax.jms.TextMessage;
 
 public class ClientTest {
-  public static void main(String[] args) throws JMSException {
+  public static void main(String[] args) throws JMSException, IOException {
     SMQConnectionFactory smqConnectionFactory = new SMQConnectionFactory("localhost", 1234);
     Connection connection = smqConnectionFactory.createConnection();
     Session session = connection.createSession(true, 1);

@@ -8,16 +8,25 @@ import java.util.Set;
 
 import javax.jms.JMSException;
 
+import org.apache.superq.Broker;
+import org.apache.superq.CommitTransaction;
 import org.apache.superq.QueueInfo;
 import org.apache.superq.SMQMessage;
+import org.apache.superq.Task;
 import org.apache.superq.db.FileDatabase;
 import org.apache.superq.db.FileDatabaseFactoryImpl;
+import org.apache.superq.network.ConnectionContext;
 import sun.reflect.generics.reflectiveObjects.NotImplementedException;
 
 public class TransactionalStoreImpl implements TransactionalStore {
 
   Set<TransactionSync> syncSet = new HashSet<>();
   List<SMQMessage> messageList = new ArrayList<>();
+  Broker broker;
+
+  public TransactionalStoreImpl(Broker broker){
+    this.broker = broker;
+  }
 
   @Override
   public void addSynchrounization(TransactionSync sync) {
@@ -25,16 +34,37 @@ public class TransactionalStoreImpl implements TransactionalStore {
   }
 
   @Override
-  public void commit() throws JMSException, IOException {
-    for(SMQMessage message : messageList){
-        FileDatabase<SMQMessage> messageDatabase = FileDatabaseFactoryImpl.getInstance().getOrInitializeMainDatabase(((QueueInfo) message.getJMSDestination()).getQueueName());
-        messageDatabase.appendMessage(message);
-    }
-    for(TransactionSync sync : syncSet){
-      sync.afterCommit();
-    }
-    syncSet = new HashSet<>();
-    messageList = new ArrayList<>();
+  public void commit(ConnectionContext connectionContext, CommitTransaction commitTransaction) throws JMSException, IOException {
+    //System.out.println("Enqueu..");
+    broker.enqueueFileIo(new Task() {
+      @Override
+      public void perform() throws Exception {
+       try {
+       //  System.out.println("Enqueu.."+messageList.size());
+         long stime = System.currentTimeMillis();
+         for (SMQMessage message : messageList) {
+           String qname = ((QueueInfo) message.getJMSDestination()).getQueueName();
+           MessageStore<SMQMessage> messageStore = broker.getMainMessageStore(qname);
+           messageStore.addMessage(message);
+         }
+         //System.out.println("time in commiting " + (System.currentTimeMillis() - stime) +
+           //                         " of " + messageList.size() + " " + connectionContext.getInfo().getConnectionId());
+       }catch (Exception e){
+         e.printStackTrace();
+         throw e;
+       }
+      }
+    }, new Task() {
+      @Override
+      public void perform() throws Exception {
+        for(TransactionSync sync : syncSet){
+          sync.afterCommit();
+        }
+        syncSet = new HashSet<>();
+        messageList = new ArrayList<>();
+        connectionContext.sendAsyncPacket(commitTransaction);
+      }
+    });
   }
 
   @Override

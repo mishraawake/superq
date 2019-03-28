@@ -157,6 +157,7 @@ public class OneRow<T extends Serialization> {
     MemoryCell mc = new MemoryCell(interval);
     mc.setMmBuffer(file.getChannel().map(FileChannel.MapMode.READ_WRITE,
                                          mc.getStartIndex(), mc.getEndIndex() - mc.getStartIndex()));
+    mc.setLastValidLocation((int)(interval.getEndIndex() - interval.getStartIndex()));
     totalMemoryAllocated.addAndGet(interval.getSize());
     sortedScattedCell.put(interval, mc);
     priorityScattedCell.add(mc);
@@ -179,7 +180,7 @@ public class OneRow<T extends Serialization> {
   }
 
 
-  public long append(T entry) throws IOException {
+  public synchronized long append(T entry) throws IOException {
     return append(entry, medadata.getProcessedSize() +  memoryCell.getStartIndex() + memoryCell.getLastValidLocation());
   }
 
@@ -192,7 +193,7 @@ public class OneRow<T extends Serialization> {
     return true;
   }
 
-  public long append(T entry, long location) throws IOException {
+  public synchronized long append(T entry, long location) throws IOException {
     if(isTyped()){
       ByteBuffer bb = ByteBuffer.allocate(2);
       bb.putShort(entry.getType());
@@ -222,11 +223,11 @@ public class OneRow<T extends Serialization> {
       memoryCell.write(leftOverByte, startingLocation);
     }
     medadata.setSize((location - medadata.getProcessedSize()) + leftOverByte.length);
-    this.randomAccessFile.getChannel().force(true);
+   // this.randomAccessFile.getChannel().force(true);
     return location;
   }
 
-  public void update(long messageId, byte[] byteBuffer) throws IOException {
+  public synchronized void update(long messageId, byte[] byteBuffer) throws IOException {
     if(messageId >= medadata.getProcessedSize() + memoryCell.getStartIndex() + memoryCell.getLastValidLocation()){
       return;
     }
@@ -254,7 +255,7 @@ public class OneRow<T extends Serialization> {
     }
   }
 
-  public T getEntry(long actualIndex, int size) throws IOException {
+  public synchronized T getEntry(long actualIndex, int size) throws IOException {
     if(actualIndex >= medadata.getProcessedSize() + memoryCell.getStartIndex() + memoryCell.getLastValidLocation()){
       return null;
     }

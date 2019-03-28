@@ -11,7 +11,7 @@ import org.apache.superq.network.ConnectionContext;
 public class ResponsePartial implements Partial {
 
   Serialization serialization;
-  boolean started = false;
+  volatile boolean started = false;
   int remaining ;
   ByteBuffer bb;
 
@@ -23,6 +23,7 @@ public class ResponsePartial implements Partial {
   public void tryComplete(SocketChannel ssc) throws IOException {
     byte[] responseByte = serialization.getBuffer();
     if(!started){
+      started = true;
       remaining = responseByte.length + Integer.BYTES + Short.BYTES;
       bb = ByteBuffer.allocate(remaining);
       bb.putInt(serialization.getSize());
@@ -30,6 +31,7 @@ public class ResponsePartial implements Partial {
       bb.put(responseByte);
       bb.flip();
       remaining -= ssc.write(bb);
+      return;
     }
     if(remaining > 0){
       remaining -= ssc.write(bb);
@@ -44,5 +46,17 @@ public class ResponsePartial implements Partial {
   @Override
   public Task handle(ConnectionContext cc) throws IOException {
     return null;
+  }
+
+  public Serialization getSerialization() {
+    return serialization;
+  }
+
+  public boolean isStarted() {
+    return started;
+  }
+
+  public void setStarted(boolean started) {
+    this.started = started;
   }
 }

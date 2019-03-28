@@ -1,4 +1,6 @@
 package org.apache.superq.storage;
 
-public interface MessageStoreFilter extends MessageStore {
+import org.apache.superq.Serialization;
+
+public interface MessageStoreFilter<M extends Serialization> extends MessageStore<M> {
 }

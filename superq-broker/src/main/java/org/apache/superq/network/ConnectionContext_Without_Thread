@@ -60,7 +60,7 @@ public class ConnectionContext {
       CorrelatedPacket correlatedPacket = (CorrelatedPacket) serialization;
       enqueuTime.putIfAbsent(((CorrelatedPacket) serialization).getPacketId(), System.currentTimeMillis());
     }
-    //  System.out.println("writing "+serialization);
+  //  System.out.println("writing "+serialization);
     totalSendResponse.incrementAndGet();
     if(goForJumbo){
       writeAccumulatedResponse();
@@ -98,8 +98,8 @@ public class ConnectionContext {
       if(serialization instanceof CorrelatedPacket){
         CorrelatedPacket correlatedPacket = (CorrelatedPacket)serialization;
         if(System.currentTimeMillis() - correlatedPacket.getDebugTime()  > 100){
-          // System.out.println("Debug time 2 = "+( System.currentTimeMillis() - correlatedPacket.getDebugTime()));
-          //correlatedPacket.setDebugTime(System.currentTimeMillis());
+         // System.out.println("Debug time 2 = "+( System.currentTimeMillis() - correlatedPacket.getDebugTime()));
+          correlatedPacket.setDebugTime(System.currentTimeMillis());
         }
       }
 
@@ -113,49 +113,38 @@ public class ConnectionContext {
   }
 
   // will be executed by request/response thread.
-  void writeResponse()  {
-    try {
-      if (responsePartial != null) {
+  void writeResponse() throws IOException {
+    if(responsePartial != null){
+      try {
+        responsePartial.tryComplete(sc);
+      } catch (IOException ioe){
         try {
-          responsePartial.tryComplete(sc);
+          closeConnection("Consumer");
         }
-        catch (IOException ioe) {
-          try {
-            closeConnection("Consumer");
-          }
-          catch (IOException e) {
-            e.printStackTrace();
-          }
-          ioe.printStackTrace();
+        catch (IOException e) {
+          e.printStackTrace();
         }
-        if (responsePartial.complete()) {
-          Serialization serialization = responsePartial.getSerialization();
-          if (serialization instanceof CorrelatedPacket) {
-            CorrelatedPacket packet = (CorrelatedPacket) serialization;
-            if (enqueuTime.containsKey(packet.getPacketId())) {
-              long time = System.currentTimeMillis() - enqueuTime.get(packet.getPacketId());
-              enqueuTime.remove(packet.getPacketId());
-              // System.out.println(packet.getPacketId());
-              if (time > 10)
-                System.out.println("Totla time in correlated packet " +
-                                           (time) + " total " + totalSendResponse);
+        ioe.printStackTrace();
+      }
+      if (responsePartial.complete()) {
+        Serialization serialization = responsePartial.getSerialization();
+        if(serialization instanceof CorrelatedPacket){
+          CorrelatedPacket packet = (CorrelatedPacket)serialization;
+          if (enqueuTime.containsKey(packet.getPacketId())){
+            long time = System.currentTimeMillis() - enqueuTime.get(packet.getPacketId());
+            enqueuTime.remove(packet.getPacketId());
+           // System.out.println(packet.getPacketId());
+            if(time > 10)
+              System.out.println("Totla time in correlated packet "+
+                                       (time) +" total "+totalSendResponse);
 
-              if (System.currentTimeMillis() - packet.getDebugTime() >= 0) {
-                System.out.println("Sent Time "+System.currentTimeMillis() +" type "+packet.getType());
-                 System.out.println("Debug time send = "+( System.currentTimeMillis() - packet.getDebugTime() ));
-                // packet.setDebugTime(System.currentTimeMillis());
-              }
+            if(System.currentTimeMillis() - packet.getDebugTime()  > 2){
+             // System.out.println("Debug time send = "+( System.currentTimeMillis() - packet.getDebugTime() ));
+             // packet.setDebugTime(System.currentTimeMillis());
             }
           }
-          completeResponse();
         }
-      }
-    } catch (IOException e){
-      try {
-        closeConnection("Consumer");
-      }
-      catch (IOException e1) {
-        e1.printStackTrace();
+        completeResponse();
       }
     }
   }
@@ -196,7 +185,7 @@ public class ConnectionContext {
   }
 
   private void closeConnection(String from) throws IOException {
-    // System.out.println("killing connection "+from + " "+sc);
+   // System.out.println("killing connection "+from + " "+sc);
     queuedUpResponses.clear();
     Iterator<Long> keyIterator = sessions.keySet().iterator();
     while (keyIterator.hasNext()) {

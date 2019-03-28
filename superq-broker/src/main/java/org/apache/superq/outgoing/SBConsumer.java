@@ -1,5 +1,6 @@
 package org.apache.superq.outgoing;
 
+import java.io.IOException;
 import java.util.List;
 import java.util.Set;
 
@@ -9,11 +10,11 @@ import org.apache.superq.storage.Constraint;
 
 public interface SBConsumer<M> {
   ConsumerInfo getConsumerInfo();
-  void dispatch(M message);
+  void dispatch(M message) throws IOException;
   void prepare();
   void start();
   void dispose();
-  M pull();
+  M pull() throws IOException;
   void ack(long messageId);
   int outstandingAcks();
   List<Constraint> getConstraints();

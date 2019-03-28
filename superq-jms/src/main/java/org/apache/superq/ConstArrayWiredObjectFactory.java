@@ -2,6 +2,8 @@ package org.apache.superq;
 
 import java.io.DataInputStream;
 import java.io.IOException;
+import java.nio.channels.Selector;
+import javax.jms.JMSException;
 
 public class ConstArrayWiredObjectFactory implements WiredObjectFactory {
 
@@ -26,5 +28,12 @@ public class ConstArrayWiredObjectFactory implements WiredObjectFactory {
     }
     ((Serialization)instantiate).acceptByteBuffer(restOfTheBytes);
     return (SerializationSupport) instantiate;
+  }
+
+  public static void main(String[] args) throws IOException, JMSException {
+    Selector selector = Selector.open();
+    long stime = System.currentTimeMillis();
+    SMQConnection connection = new SMQConnection(null, 1, selector, null);
+    System.out.println(System.currentTimeMillis() - stime);
   }
 }

@@ -1,9 +1,9 @@
 package org.apache.superq;
 
-import java.io.Closeable;
 import java.io.Serializable;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import javax.jms.BytesMessage;
@@ -25,6 +25,8 @@ import javax.jms.TextMessage;
 import javax.jms.Topic;
 import javax.jms.TopicSubscriber;
 
+
+
 public class SMQSession implements javax.jms.Session {
 
   private boolean isTransacted;
@@ -38,8 +40,10 @@ public class SMQSession implements javax.jms.Session {
   AtomicLong consumerIdStore = new AtomicLong(0);
   AtomicLong transactioStore = new AtomicLong(0);
   AtomicInteger queueId = new AtomicInteger(0);
+  ExecutorService consumerTaskExecutor;
   private final int timeout = 5000;
   private Long currentTrId  = null;
+  private Object serialExecutionMutex = new Object();
 
   public SMQSession(boolean isTransacted, int acknowledgeMode) throws JMSException {
     this.isTransacted = isTransacted;
@@ -47,7 +51,7 @@ public class SMQSession implements javax.jms.Session {
   }
 
   public void initialize() throws JMSException {
-    sendAsynchronously(createSessionInfo());
+    this.connection.sendSync(createSessionInfo());
     if(this.connection.isStarted()){
       this.start();
     }
@@ -176,25 +180,27 @@ public class SMQSession implements javax.jms.Session {
     producerInfo.setId(prodducerId);
     producerInfo.setSessionId(this.getId());
     producerInfo.setConnectionId(this.getConnection().getConnectionId());
-    sendAsynchronously(producerInfo);
+    this.connection.sendSync(producerInfo);
     producerMap.put(prodducerId, producer);
     return producer;
   }
 
   @Override
   public MessageConsumer createConsumer(Destination destination) throws JMSException {
-    SMQOldConsumer consumer = new SMQOldConsumer();
-    consumer.setQueue((QueueInfo) destination);
-    consumer.setSession(this);
-    consumer.setId(consumerIdStore.incrementAndGet());
-    consumerMap.put(consumer.getId(), consumer);
-    return consumer;
+    return createConsumer(destination, null);
   }
 
   @Override
   public MessageConsumer createConsumer(Destination destination, String messageSelector) throws JMSException {
-    return null;
+    SMQOldConsumer consumer = new SMQOldConsumer(messageSelector);
+    consumer.setQueue((QueueInfo) destination);
+    consumer.setSession(this);
+    consumer.setId(consumerIdStore.incrementAndGet());
+    consumerMap.put(consumer.getId(), consumer);
+    this.setConsumerTaskExecutor(this.getConnection().getSessionExecutor(this.getId()));
+    return consumer;
   }
+
 
   @Override
   public MessageConsumer createConsumer(Destination destination, String messageSelector, boolean noLocal) throws JMSException {
@@ -257,18 +263,18 @@ public class SMQSession implements javax.jms.Session {
 
   @Override
   public QueueBrowser createBrowser(Queue queue) throws JMSException {
-    SQQueueBrowser queueBrowser = new SQQueueBrowser();
+    return createBrowser(queue, null);
+  }
+
+  @Override
+  public QueueBrowser createBrowser(Queue queue, String messageSelector) throws JMSException {
+    SQQueueBrowser queueBrowser = new SQQueueBrowser(null);
     queueBrowser.setId(consumerIdStore.incrementAndGet());
     queueBrowser.setQueue(queue);
     queueBrowser.setSession(this);
     queueBrowser.start();
     consumerMap.putIfAbsent(queueBrowser.getId(), queueBrowser);
     return queueBrowser;
-  }
-
-  @Override
-  public QueueBrowser createBrowser(Queue queue, String messageSelector) throws JMSException {
-    return null;
   }
 
   @Override
@@ -308,6 +314,7 @@ public class SMQSession implements javax.jms.Session {
     }
     message.setSessionId(this.getId());
     if(isTransacted){
+     // message.setResponseRequire(true);
       this.connection.sendAsync(message);
     } else {
       this.connection.sendSync(message, timeout);
@@ -341,6 +348,43 @@ public class SMQSession implements javax.jms.Session {
 
   public void start() {
 
+  }
+
+  public void deliver(SMQMessage message) {
+    AutoCloseable closeable = consumerMap.get(message.getConsumerId());
+    if(closeable instanceof SMQOldConsumer){
+      SMQOldConsumer consumer = (SMQOldConsumer)closeable ;
+      if(consumer.messageListener != null){
+        // enqueue to the consumer;
+        consumerTaskExecutor.execute (new Runnable() {
+          @Override
+          public void run() {
+
+            synchronized (SMQSession.this.serialExecutionMutex) {
+              try {
+                consumer.handleOnMessage(message);
+              }
+              catch (JMSException e) {
+                e.printStackTrace();
+              }
+            }
+          }
+        });
+      } else {
+        consumer.receiveInternal(message);
+      }
+    } else {
+      SQQueueBrowser sqQueueBrowser = (SQQueueBrowser)closeable;
+      sqQueueBrowser.consumer(message);
+    }
+  }
+
+  public ExecutorService getConsumerTaskExecutor() {
+    return consumerTaskExecutor;
+  }
+
+  public void setConsumerTaskExecutor(ExecutorService consumerTaskExecutor) {
+    this.consumerTaskExecutor = consumerTaskExecutor;
   }
 
   public void stop() {

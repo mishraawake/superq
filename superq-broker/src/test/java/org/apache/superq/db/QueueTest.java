@@ -6,8 +6,10 @@ import javax.jms.JMSException;
 import org.apache.superq.Broker;
 import org.apache.superq.ConsumerInfo;
 import org.apache.superq.QueueInfo;
+import org.apache.superq.SMQMessage;
 import org.apache.superq.outgoing.SBConsumer;
 import org.apache.superq.outgoing.SBConsumerDefault;
+import org.apache.superq.storage.MessageStoreImpl;
 import org.apache.superq.storage.SBQueueDefault;
 import org.junit.Test;
 
@@ -19,7 +21,7 @@ public class QueueTest extends AbstractTest {
     QueueInfo queueInfo = new QueueInfo();
     queueInfo.setQueueName(qname);
     queueInfo.setId(1);
-    SBQueueDefault sbQueueDefault = new SBQueueDefault(broker, queueInfo, fileDatabase);
+    SBQueueDefault sbQueueDefault = new SBQueueDefault(broker, queueInfo, new MessageStoreImpl<SMQMessage>(fileDatabase, broker));
   }
 
   private SBConsumer addConsumers(){

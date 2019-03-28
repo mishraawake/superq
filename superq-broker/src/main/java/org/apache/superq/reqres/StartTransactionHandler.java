@@ -11,9 +11,11 @@ public class StartTransactionHandler implements RequestHandler<StartTransaction>
   }
   @Override
   public void handle(StartTransaction startTransaction, ConnectionContext connectionContext) {
+    //System.out.println("start tr");
     SessionContext sessionContext = connectionContext.getSession(startTransaction.getSessionId());
     if(sessionContext != null){
       sessionContext.setTransactionId(startTransaction.getTransactionId());
+     // System.out.println("start tr"+sessionContext.getTransactionId() + "  "+startTransaction.getTransactionId());
       sessionContext.startTransaction(startTransaction.getTransactionId());
     }
   }

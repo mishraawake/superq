@@ -5,32 +5,35 @@ import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.SocketAddress;
+import java.net.SocketOption;
 import java.nio.channels.SelectableChannel;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.Selector;
 import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
 import java.util.Iterator;
-import java.util.LinkedList;
 import java.util.Map;
-import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.apache.superq.Broker;
+import org.apache.superq.CallbackExecutor;
 
 public class BrokerServer {
 
   int port;
   String hostName = "127.0.0.1";
+
+
   public Map<String, ConnectionContext> allConnectionContext = new ConcurrentHashMap<>();
+
   Selector acceptingSelector;
   Selector readingWritingSelector;
+
+
   Broker broker;
+
   AtomicInteger totalAcceptd = new AtomicInteger(0);
-  final int numberOfProcessingThread = 1;
-  BlockingQueue<ProcessingThread> processingThreads = new LinkedBlockingQueue<>();
 
   public BrokerServer(int port, Broker broker){
     this.broker = broker;
@@ -39,7 +42,6 @@ public class BrokerServer {
     try {
       acceptingSelector = Selector.open();
       readingWritingSelector = Selector.open();
-      createThreads();
       startListening(port);
     }
     catch (IOException e) {
@@ -49,16 +51,7 @@ public class BrokerServer {
 
 
   public static String connectionId(Socket socket){
-    return socket.toString();
-  }
-
-  private void createThreads() throws IOException {
-    for (int threadIndex = 0; threadIndex < numberOfProcessingThread; threadIndex++) {
-      ProcessingThread processingThread = new ProcessingThread(broker, allConnectionContext);
-      Thread thread = new Thread(processingThread, "Processing thread "+threadIndex);
-      processingThreads.add(processingThread);
-      thread.start();
-    }
+    return socket .toString();
   }
 
   private void startListening(int port) throws IOException {
@@ -66,8 +59,8 @@ public class BrokerServer {
     channel.configureBlocking(false);
     channel.bind(getSocketAddress(), 1000);
     channel.register(acceptingSelector, SelectionKey.OP_ACCEPT);
-    readingWritingThread();
     System.out.println("Server started!");
+    readingWritingThread();
     selectAndDo(acceptingSelector);
   }
 
@@ -107,11 +100,41 @@ public class BrokerServer {
             if (selectableChannel instanceof ServerSocketChannel) {
               ServerSocketChannel ssc = (ServerSocketChannel) selectableChannel;
               SocketChannel sc = ssc.accept();
-              ProcessingThread processingThread =processingThreads.remove();
-              processingThread.acceptNewConnection(sc);
+              // System.out.println(sc.getRemoteAddress());
               sc.configureBlocking(false);
-              processingThreads.add(processingThread);
+              sc.socket().setTcpNoDelay(false);
+             // sc.socket().setKeepAlive(true);
+              sc.socket().setReceiveBufferSize(1024 * 1024*1024);
+              System.out.println("Aceppint ......"+totalAcceptd.incrementAndGet()+" "+sc.socket());
+              readingWritingSelector.wakeup();
+              SelectionKey key = sc.register(readingWritingSelector, SelectionKey.OP_READ);
+              ConnectionContext connectionContext = new ConnectionContext(sc, key, broker, connectionId(sc.socket()));
+              allConnectionContext.put(connectionId(sc.socket()), connectionContext);
+              System.out.println(connectionId(sc.socket()));
             }
+          }
+          if (next.isValid() && next.isReadable()) {
+            //System.out.println("in reading");
+            SocketChannel sc = (SocketChannel) selectableChannel;
+            ConnectionContext connectionContext = allConnectionContext.get(connectionId(sc.socket()));
+           // System.out.println(connectionId(sc.socket()));
+            while (connectionContext == null){
+              connectionContext = allConnectionContext.get(connectionId(sc.socket()));
+              Thread.yield();
+            }
+            long stime = System.currentTimeMillis();
+            connectionContext.readRequest();
+           // Thread.sleep(1111);
+            if((System.currentTimeMillis() - stime) > 1)
+              System.out.println("In reading "+(System.currentTimeMillis() - stime));
+          }
+          if (next.isValid() && next.isWritable()) {
+            SocketChannel sc = (SocketChannel) selectableChannel;
+            ConnectionContext connectionContext = allConnectionContext.get(connectionId(sc.socket()));
+            long stime = System.currentTimeMillis();
+            connectionContext.writeResponse();
+            if((System.currentTimeMillis() - stime) > 1)
+             System.out.println("In writing "+(System.currentTimeMillis() - stime));
           }
         }
       }
