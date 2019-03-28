@@ -1,5 +1,6 @@
 package org.apache.superq;
 
+import java.io.IOException;
 import java.util.concurrent.atomic.AtomicInteger;
 import javax.jms.Connection;
 import javax.jms.DeliveryMode;
@@ -15,7 +16,7 @@ import javax.jms.TextMessage;
 public class InfiniteConsumers {
   static long stime = System.currentTimeMillis();
 
-  public static void main(String[] args) throws JMSException {
+  public static void main(String[] args) throws JMSException, IOException {
 //"10.41.56.186"
     SMQConnectionFactory smqConnectionFactory = new SMQConnectionFactory("localhost", 1234);
     Connection connection = smqConnectionFactory.createConnection();

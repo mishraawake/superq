@@ -8,6 +8,7 @@ import java.util.Objects;
 public class CorrelatedPacket extends SerializationSupport{
 
   private long packetId;
+  private long debugTime;
 
   public long getPacketId() {
     return packetId;
@@ -17,16 +18,26 @@ public class CorrelatedPacket extends SerializationSupport{
     this.packetId = packetId;
   }
 
+  public long getDebugTime() {
+    return debugTime;
+  }
+
+  public void setDebugTime(long debugTime) {
+    this.debugTime = debugTime;
+  }
+
   @Override
   public void serializeFields(DataOutputStream dos) throws IOException {
     super.serializeFields(dos);
     serializeLong(dos, packetId);
+    serializeLong(dos, debugTime);
   }
 
   @Override
   public void deSerializeFields(DataInputStream dis) throws IOException {
     super.deSerializeFields(dis);
     packetId = deSerializeLong(dis);
+    debugTime = deSerializeLong(dis);
   }
 
   @Override

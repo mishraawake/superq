@@ -174,7 +174,7 @@ public class FileDatabase<T extends Serialization> {
     for(; list.size() <  additional ; ++i){
       IndexEntry indexEntry = indexRow.getEntry(i*IndexEntry.SIZE, IndexEntry.SIZE);
       if(indexEntry ==  null){
-        System.out.println("toota hua index entry ="+startIndex);
+        //System.out.println("toota hua index entry ="+startIndex);
         break;
       }
       if(indexEntry.getMessageLength() == 0){

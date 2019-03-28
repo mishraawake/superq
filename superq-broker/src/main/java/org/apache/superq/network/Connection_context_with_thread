@@ -1,0 +1,288 @@
+package org.apache.superq.network;
+
+
+import java.io.ByteArrayOutputStream;
+import java.io.DataOutputStream;
+import java.io.IOException;
+import java.nio.channels.SelectionKey;
+import java.nio.channels.Selector;
+import java.nio.channels.ServerSocketChannel;
+import java.nio.channels.SocketChannel;
+import java.util.Iterator;
+import java.util.Map;
+import java.util.Queue;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+
+import org.apache.superq.Broker;
+import org.apache.superq.ConnectionInfo;
+import org.apache.superq.CorrelatedPacket;
+import org.apache.superq.JumboText;
+import org.apache.superq.Serialization;
+import org.apache.superq.SessionInfo;
+import org.apache.superq.Task;
+import org.apache.superq.reqres.PartialRequest;
+import org.apache.superq.reqres.ResponsePartial;
+
+public class ConnectionContext{
+
+  Queue<Serialization> queuedUpResponses = new LinkedBlockingQueue<>();
+  private Map<Long, SessionContext> sessions = new ConcurrentHashMap<>();
+  private Map<Long, Long> enqueuTime = new ConcurrentHashMap<>();
+  SocketChannel sc;
+  ServerSocketChannel serverSocketChannel;
+  SelectionKey key;
+  AtomicLong totalResponse = new AtomicLong(0);
+  ConnectionInfo info;
+  PartialRequest pr = new PartialRequest();
+  Broker broker;
+  String id;
+  AtomicInteger totalSendResponse = new AtomicInteger(0);
+  AtomicInteger totalWrote = new AtomicInteger(0);
+  private volatile ResponsePartial responsePartial;
+
+  public ConnectionContext(ServerSocketChannel serverSocketChannel, Broker broker) {
+    this.serverSocketChannel = serverSocketChannel;
+    this.broker = broker;
+  }
+
+  public synchronized void accept(int acceptingTimes, Selector readingWritingSelector, Selector selector, Map<String, ConnectionContext> map) {
+    try {
+      configureConnection(acceptingTimes, readingWritingSelector, selector, map);
+    } catch (IOException ioe){
+      try {
+        closeConnection("accept");
+      }
+      catch (IOException e) {
+        e.printStackTrace();
+      }
+    }
+  }
+
+  private void configureConnection(int acceptingTimes, Selector readingWritingSelector, Selector selector, Map<String, ConnectionContext> map) throws IOException {
+    long stime = System.currentTimeMillis();
+    this.sc = serverSocketChannel.accept();
+    this.id = BrokerServer.connectionId(sc.socket());
+    map.put(this.id, this);
+    if (System.currentTimeMillis() - stime > 1)
+      System.out.println("Connection time " + (System.currentTimeMillis() - stime) + "  " + acceptingTimes);
+    // System.out.println(sc.getRemoteAddress());
+    sc.configureBlocking(false);
+    sc.socket().setTcpNoDelay(false);
+    // sc.socket().setKeepAlive(true);
+    sc.socket().setReceiveBufferSize(1024 * 1024 * 1024);
+    if (System.currentTimeMillis() - stime > 1)
+      System.out.println("Connection time " + (System.currentTimeMillis() - stime) + "  " + acceptingTimes);
+    readingWritingSelector.wakeup();
+    this.key = sc.register(readingWritingSelector, SelectionKey.OP_READ);
+    readingWritingSelector.wakeup();
+    System.out.println("Register time");
+    selector.wakeup();
+    serverSocketChannel.register(selector, SelectionKey.OP_ACCEPT);
+    selector.wakeup();
+    System.out.println("Register time");
+  }
+
+  // will be executed by callback thread
+  public void sendAsyncPacket(Serialization serialization) throws IOException {
+    System.out.println("Writing comes "+System.currentTimeMillis());
+    queuedUpResponses.add((serialization));
+    if (serialization instanceof CorrelatedPacket) {
+      CorrelatedPacket correlatedPacket = (CorrelatedPacket) serialization;
+      enqueuTime.putIfAbsent(((CorrelatedPacket) serialization).getPacketId(), System.currentTimeMillis());
+    }
+    //System.out.println("writing "+serialization);
+    totalSendResponse.incrementAndGet();
+    if(responsePartial == null || !responsePartial.isStarted()) {
+      synchronized (key) {
+        synchronized (key){
+          key.interestOps(key.interestOps() | SelectionKey.OP_WRITE);
+          key.selector().wakeup();
+        }
+      }
+    }
+  }
+
+  private synchronized void writeAccumulatedResponse() throws IOException {
+    if (queuedUpResponses.size() > 1) {
+      ByteArrayOutputStream bao = new ByteArrayOutputStream();
+      DataOutputStream dos = new DataOutputStream(bao);
+      int count = 0;
+      while (!queuedUpResponses.isEmpty()) {
+        Serialization queuedUpSerializarion = queuedUpResponses.poll();
+        dos.writeInt(queuedUpSerializarion.getSize());
+        dos.writeShort(queuedUpSerializarion.getType());
+        dos.write(queuedUpSerializarion.getBuffer());
+        ++count;
+      }
+      // System.out.println("sending messages in "+(System.currentTimeMillis() - stime));
+      JumboText jumboText = new JumboText();
+      jumboText.setNumberOfItems(count);
+      jumboText.setBytes(bao.toByteArray());
+      totalWrote.addAndGet(count);
+      responsePartial = new ResponsePartial(jumboText);
+    }
+    else {
+      Serialization serialization = queuedUpResponses.poll();
+      if (serialization instanceof CorrelatedPacket) {
+        CorrelatedPacket correlatedPacket = (CorrelatedPacket) serialization;
+        if (System.currentTimeMillis() - correlatedPacket.getDebugTime() > 10) {
+          //  System.out.println("Debug time 2 = " + (System.currentTimeMillis() - correlatedPacket.getDebugTime()));
+          // correlatedPacket.setDebugTime(System.currentTimeMillis());
+        }
+      }
+
+      totalWrote.incrementAndGet();
+      responsePartial = new ResponsePartial(serialization);
+    }
+  }
+
+  // will be executed by request/response thread.
+  synchronized void writeResponse() {
+    try {
+      if(responsePartial == null || !responsePartial.isStarted()) {
+        writeAccumulatedResponse();
+      }
+      responsePartial.tryComplete(sc);
+      if (responsePartial.complete()) {
+        Serialization serialization = responsePartial.getSerialization();
+        if (serialization instanceof CorrelatedPacket) {
+          CorrelatedPacket packet = (CorrelatedPacket) serialization;
+          if (enqueuTime.containsKey(packet.getPacketId())) {
+            long time = System.currentTimeMillis() - enqueuTime.get(packet.getPacketId());
+            enqueuTime.remove(packet.getPacketId());
+            System.out.println(packet.getPacketId());
+            if (time > 10)
+              System.out.println("Totla time in correlated packet " +
+                                         (time) + " total " + totalSendResponse);
+
+            if (System.currentTimeMillis() - packet.getDebugTime() > 2) {
+              // System.out.println("Debug time send = " + (System.currentTimeMillis() - packet.getDebugTime()));
+              // packet.setDebugTime(System.currentTimeMillis());
+            }
+          }
+        }
+        completeResponse();
+        responsePartial.setStarted(false);
+        if(queuedUpResponses.size() > 0){
+          synchronized (key){
+            synchronized (key){
+              key.interestOps(key.interestOps() | SelectionKey.OP_WRITE);
+              key.selector().wakeup();
+            }
+          }
+        }
+      }
+    }
+    catch (IOException ioe) {
+      try {
+        closeConnection("Consumer");
+      }
+      catch (IOException e) {
+        e.printStackTrace();
+      }
+      ioe.printStackTrace();
+    }
+  }
+
+  private synchronized void completeResponse() throws IOException {
+    totalResponse.incrementAndGet();
+    synchronized (key){
+      synchronized (key){
+        key.interestOps(key.interestOps() & ~SelectionKey.OP_WRITE);
+        key.selector().wakeup();
+      }
+    }
+    writeAccumulatedResponse();
+  }
+
+
+  synchronized void readRequest() {
+    synchronized (pr) {
+      if (pr != null) {
+        try {
+          long stime = System.currentTimeMillis();
+          pr.tryComplete(sc);
+          if (pr.complete()) {
+            //  Task handleTask = pr.handle(this);
+            //  broker.putOnCallback(handleTask);
+            //  pr = new PartialRequest();
+          }
+          synchronized (key){
+            key.interestOps(key.interestOps() | SelectionKey.OP_READ);
+            key.selector().wakeup();
+          }
+        }
+        catch (IOException io) {
+          try {
+            closeConnection("Producer");
+          }
+          catch (IOException e) {
+            e.printStackTrace();
+          }
+        }
+      } else {
+        System.out.println("pr is null");
+      }
+    }
+  }
+
+  private void closeConnection(String from) throws IOException {
+    System.out.println("killing connection " + from + " " + sc);
+    queuedUpResponses.clear();
+    Iterator<Long> keyIterator = sessions.keySet().iterator();
+    while (keyIterator.hasNext()) {
+      Long next = keyIterator.next();
+      sessions.get(next).close();
+    }
+    this.broker.removeConnection(this.id);
+    if (this.key.isValid())
+      this.key.cancel();
+    this.sc.close();
+  }
+
+  public void setInfo(ConnectionInfo info) {
+    this.info = info;
+  }
+
+  public ConnectionInfo getInfo() {
+    return this.info;
+  }
+
+  public Broker getBroker() {
+    return broker;
+  }
+
+  public void setBroker(Broker broker) {
+    this.broker = broker;
+  }
+
+  public SessionContext getSession(long sessionId) {
+    return sessions.get(sessionId);
+  }
+
+  public SessionContext registerSession(SessionInfo sessionInfo) {
+    SessionContext sessionContext = new SessionContext(sessionInfo);
+    // sessionContext.setConnectionContext(this);
+    sessions.putIfAbsent(sessionInfo.getSessionId(), sessionContext);
+    return sessionContext;
+  }
+
+  public PartialRequest getPr() {
+    return pr;
+  }
+
+  public void setPr(PartialRequest pr) {
+    this.pr = pr;
+  }
+
+  public String getId() {
+    return id;
+  }
+
+  public void setId(String id) {
+    this.id = id;
+  }
+}

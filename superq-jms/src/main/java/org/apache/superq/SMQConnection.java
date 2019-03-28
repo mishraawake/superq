@@ -7,12 +7,12 @@ import java.io.DataOutputStream;
 import java.io.IOException;
 import java.net.Socket;
 import java.nio.ByteBuffer;
-import java.nio.channels.SelectableChannel;
+import java.nio.channels.ClosedChannelException;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.Selector;
 import java.nio.channels.SocketChannel;
 import java.util.ArrayList;
-import java.util.Iterator;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -33,14 +33,13 @@ import javax.jms.ConnectionMetaData;
 import javax.jms.Destination;
 import javax.jms.ExceptionListener;
 import javax.jms.JMSException;
-import javax.jms.MessageConsumer;
 import javax.jms.ServerSessionPool;
 import javax.jms.Session;
+import javax.jms.TextMessage;
 import javax.jms.Topic;
 
 import org.apache.superq.log.Logger;
 import org.apache.superq.log.LoggerFactory;
-import sun.jvm.hotspot.debugger.ReadResult;
 
 public class SMQConnection implements javax.jms.Connection {
 
@@ -54,42 +53,89 @@ public class SMQConnection implements javax.jms.Connection {
   AtomicLong sessionIdStore = new AtomicLong(0);
   AtomicLong correlatedIdStore = new AtomicLong(0);
   WiredObjectFactory partialRequestFactory = new ConstArrayWiredObjectFactory();
-  SocketChannel socketChannel;
+  volatile SocketChannel socketChannel;
   Thread receiver;
   private AtomicBoolean started = new AtomicBoolean(false);
   Set<Long> messagesAckAwaited = new ConcurrentSkipListSet<>();
+  Map<Long, Long> debugTiming = new ConcurrentHashMap<>();
   Set<Long> correlatedsAckAwaited = new ConcurrentSkipListSet<>();
   Object sendAwait = new Object();
+  AtomicBoolean connectWait = new AtomicBoolean(true);
+  AtomicBoolean writeWait = new AtomicBoolean(true);
+  AtomicBoolean readWait = new AtomicBoolean(true);
   Map<Long, SMQSession> sessionMap = new ConcurrentHashMap<>();
   private final int defaultTimeout = 5000;
   Selector selector;
+  Selector connectionSelector;
   BlockingQueue<Serialization> serializationsQueue = new LinkedBlockingQueue<>();
   SelectionKey key;
-  volatile JumboText jumboText;
+  volatile Serialization jumboText;
   volatile ByteBuffer writeBuffer;
-  int remaining = 0;
+  int remaining = Integer.BYTES + Short.BYTES;
   volatile boolean readyForPackaging = true;
   RequestReader requestReader = new RequestReader();
   ExecutorService executorService = null;
   AtomicInteger sentItem = new AtomicInteger(0);
-  NetworkThread networkThread;
+  volatile boolean connected = false;
+  volatile boolean errorConnected = false;
+  WiredObjectFactory rf = new ConstArrayWiredObjectFactory();
 
-  public SMQConnection(SocketChannel socketChannel, long connectionId) throws JMSException, IOException {
+  public SMQConnection(SocketChannel socketChannel, long connectionId, Selector selector, Selector connectionSelector) throws JMSException, IOException {
+    long stime = System.currentTimeMillis();
     this.socketChannel = socketChannel;
     this.connectionId = connectionId;
-    selector = Selector.open();
-    key = socketChannel.register(selector, SelectionKey.OP_READ);
-    networkThread = new NetworkThread();
-    Thread thread = new Thread(networkThread);
-    thread.start();
-    sendConnectionInfo();
+    this.selector = selector;
+    this.connectionSelector = connectionSelector;
   }
 
-  private void sendConnectionInfo() throws JMSException {
+  public void registerForConnect() throws IOException  {
+    this.connectionSelector.wakeup();
+    waitToNotifyForConnect();
+  }
+
+  private void waitToNotifyForConnect() throws IOException {
+    waitOn(connectWait);
+    connect(this.socketChannel);
+  }
+
+  public void notifyToConnect(SocketChannel sc) {
+    this.socketChannel = sc;
+    wakeForObject(connectWait);
+  }
+
+  public void connect(SocketChannel socketChannel) throws IOException {
+    try {
+      //socketChannel.configureBlocking(true);
+      boolean finishConnect =  socketChannel.finishConnect();
+      if(!finishConnect) {
+        System.out.println("Not Successfully connected " + this.socketChannel.socket());
+        System.exit(1);
+      } else {
+        System.out.println("Successfully connected " + this.socketChannel.socket() + " "+socketChannel.isConnected() +" "+socketChannel.isConnectionPending() + " "+System.currentTimeMillis()  +" "+socketChannel.isOpen());
+        //sleep(1000);
+      }
+      selector.wakeup();
+      key = this.socketChannel.register(selector, SelectionKey.OP_READ);
+      key.attach(this);
+      this.errorConnected = false;
+    } catch (Exception e) {
+      this.errorConnected = true;
+      throw e;
+    } finally {
+      this.connected = true;
+      synchronized (started){
+        started.notify();
+      }
+    }
+   // this.socketChannel = socketChannel;
+  }
+
+  private ConnectionInfo sendConnectionInfo() throws JMSException {
 
     ConnectionInfo connectionInfo = new ConnectionInfo();
     connectionInfo.setConnectionId(getConnectionId());
     sendSync(connectionInfo);
+    return connectionInfo;
   }
 
   public void sendSync(SMQMessage message, int timeout) throws JMSException {
@@ -127,7 +173,7 @@ public class SMQConnection implements javax.jms.Connection {
       threadPoolExecutor.setRejectedExecutionHandler(new RejectedExecutionHandler() {
         @Override
         public void rejectedExecution(Runnable r, ThreadPoolExecutor executor) {
-          System.out.println("accessive message are being consumed, rejecting");
+          ////System.out.println("accessive message are being consumed, rejecting");
         }
       });
     }
@@ -137,6 +183,7 @@ public class SMQConnection implements javax.jms.Connection {
   public void sendSync(CorrelatedPacket packet, int timeout) throws JMSException {
     try {
       packet.setPacketId(correlatedIdStore.incrementAndGet());
+      packet.setDebugTime(System.currentTimeMillis());
       correlatedsAckAwaited.add(packet.getPacketId());
       writeSerialization(packet);
       waitToNotifyForCorrelated(packet, timeout);
@@ -145,22 +192,18 @@ public class SMQConnection implements javax.jms.Connection {
     }
   }
 
-  private void waitToNotifyForCorrelated(CorrelatedPacket packet, int timeout) {
-    while (correlatedsAckAwaited.contains(Long.valueOf(packet.getPacketId()))) {
-      try {
-        synchronized (sendAwait) {
-          sendAwait.wait(timeout);
-        }
-      }
-      catch (InterruptedException e) {
-      }
+  private void waitToNotifyForCorrelated(CorrelatedPacket packet, int timeout) throws IOException {
+    synchronized (key){
+      key.interestOps( key.interestOps() | SelectionKey.OP_READ);
+      key.selector().wakeup();
     }
+    waitOn(readWait);
+    readRequest(socketChannel);
   }
 
   public void sendSync(CorrelatedPacket packet) throws JMSException {
     sendSync(packet, defaultTimeout);
   }
-
 
   @Override
   public Session createSession(boolean transacted, int acknowledgeMode) throws JMSException {
@@ -215,8 +258,27 @@ public class SMQConnection implements javax.jms.Connection {
   }
 
   @Override
-  public void start() throws JMSException {
-    if(!started.compareAndSet(false, true)){
+  public
+  void start() throws JMSException {
+    if(started.compareAndSet(false, true)){
+      while(!connected){
+        synchronized (started){
+          try {
+            started.wait(10);
+          }
+          catch (InterruptedException e) {
+            e.printStackTrace();
+          }
+        }
+      }
+      if(errorConnected){
+        throw new JMSException("Error happened in connection....");
+      }
+      long stime = System.currentTimeMillis();
+      System.out.println(" Started writing "+socketChannel.isConnectionPending());
+      ConnectionInfo connectionInfo = sendConnectionInfo();
+      if(System.currentTimeMillis() - stime >= 10)
+        System.out.println("connection sending time"+(System.currentTimeMillis() - stime) + " packetid "+connectionInfo.getPacketId());
       for(Map.Entry<Long, SMQSession> sessionEntry : sessionMap.entrySet()){
         sessionEntry.getValue().start();
       }
@@ -225,7 +287,7 @@ public class SMQConnection implements javax.jms.Connection {
 
   @Override
   public void stop() throws JMSException {
-    if(!started.compareAndSet(true, false)){
+    if(started.compareAndSet(true, false)){
       for(Map.Entry<Long, SMQSession> sessionEntry : sessionMap.entrySet()){
         sessionEntry.getValue().stop();
       }
@@ -235,12 +297,15 @@ public class SMQConnection implements javax.jms.Connection {
   @Override
   public void close() throws JMSException {
     try {
-      selector.close();
+      System.out.println("Closing...."+socketChannel.socket() + " "+Thread.currentThread().getName());
+      selector.wakeup();
+     // selector.close();
       socketChannel.close();
-
+      System.out.println("Closing...."+key);
     }
     catch (IOException e) {
-      handleIOException(e);
+      e.printStackTrace();
+     // handleIOException(e);
     }
   }
 
@@ -284,11 +349,11 @@ public class SMQConnection implements javax.jms.Connection {
      // dos.writeShort(message.getType());
       dos.write(message.getBuffer());
     }
-   // System.out.println("sending messages in "+(System.currentTimeMillis() - stime));
+   // ////System.out.println("sending messages in "+(System.currentTimeMillis() - stime));
     JumboText text = new JumboText();
     text.setBytes(bao.toByteArray());
     writeSerialization(text);
-   // System.out.println("sending messages in "+(System.currentTimeMillis() - stime));
+   // ////System.out.println("sending messages in "+(System.currentTimeMillis() - stime));
   }
 
   public void sendAsync(Serialization packet) throws JMSException {
@@ -300,9 +365,9 @@ public class SMQConnection implements javax.jms.Connection {
   }
 
   private void handleIOException(IOException e) throws JMSException{
-    JMSException jmse = new JMSException("Exception in send.");
+    JMSException jmse = new JMSException("Exception in send."+key+" "+socketChannel.socket());
     jmse.setLinkedException(e);
-    close();
+    //close();
     throw jmse;
   }
 
@@ -310,8 +375,9 @@ public class SMQConnection implements javax.jms.Connection {
     return sessionMap.getOrDefault(sessionId, null);
   }
 
-  private synchronized void writeSerialization(Serialization packet) throws IOException{
+  private void writeSerialization(Serialization packet) throws IOException{
     serializationsQueue.add(packet);
+
     if(readyForPackaging){
       writeResponse(socketChannel);
     }
@@ -330,65 +396,93 @@ public class SMQConnection implements javax.jms.Connection {
     return started.get();
   }
 
-  private void infiniteSelect() throws IOException {
-    while(true){
-      int selectResult = selector.select();
-      if(selector.isOpen()) {
-        Iterator<SelectionKey> iterator = selector.selectedKeys().iterator();
-        while (iterator.hasNext()) {
-          SelectionKey next = iterator.next();
-          iterator.remove();
-          SelectableChannel selectableChannel = next.channel();
-          if (!next.isValid()) {
-            continue;
-          }
-          if (next.isValid() && next.isReadable()) {
-            SocketChannel sc = (SocketChannel) selectableChannel;
-            readRequest(sc);
-          }
-          if (next.isValid() && next.isWritable()) {
-            SocketChannel sc = (SocketChannel) selectableChannel;
-            writeJumbo(sc);
-          }
-        }
-      } else {
-        return;
-      }
-    }
-  }
 
-  private void writeJumbo(SocketChannel sc) throws IOException {
+  public void writeJumbo(SocketChannel sc) throws IOException {
+   // ////System.out.println("Attempting to write "+readyForPackaging);
+    long stime = System.currentTimeMillis();
+    long startLog = 0;
+
     if(writeBuffer == null && jumboText != null){
+
+      if(jumboText instanceof CorrelatedPacket){
+        CorrelatedPacket correlatedPacket = (CorrelatedPacket) jumboText;
+        debugTiming.putIfAbsent(((CorrelatedPacket) jumboText).getPacketId(), System.currentTimeMillis());
+        log(correlatedPacket,0, "remain "+remaining+" "+readyForPackaging+" "+Thread.currentThread().getName());
+        startLog = System.currentTimeMillis();
+      }
+
+      ////System.out.println("sending jumbo in ");
       remaining = jumboText.getBuffer().length + Integer.BYTES + Short.BYTES;
       writeBuffer = ByteBuffer.allocate(remaining);
       writeBuffer.putInt(jumboText.getBuffer().length);
       writeBuffer.putShort(jumboText.getType());
-
-
       writeBuffer.put(jumboText.getBuffer());
       writeBuffer.flip();
-      int write = sc.write(writeBuffer);
-      remaining -= write;
+      stime = System.currentTimeMillis();
+      //synchronized (SMQConnection.class) {
+      if(!sc.isConnected())
+         System.out.println("Just before write ");
+        int write = sc.write(writeBuffer);
+        if((System.currentTimeMillis() - stime) > 10){
+           System.out.println("writing 1 ====="+ (System.currentTimeMillis() - stime) + "   "+write + " remaining "+remaining + "   "+System.currentTimeMillis() + " "+Thread.currentThread().getName());
+        }
+
+        remaining -= write;
+      if(jumboText instanceof TextMessage){
+       // System.out.println("Sending CommitTransaction Info");
+        //sleep(50);
+      }
+      if(jumboText instanceof CorrelatedPacket){
+        CorrelatedPacket correlatedPacket = (CorrelatedPacket) jumboText;
+        debugTiming.putIfAbsent(((CorrelatedPacket) jumboText).getPacketId(), System.currentTimeMillis());
+        log(correlatedPacket,2, "remain "+remaining+" "+readyForPackaging+" "+Thread.currentThread().getName());
+        startLog = System.currentTimeMillis();
+      }
+
+      //}
     } else if(remaining > 0){
+      System.out.println("Remaining...");
       int write = sc.write(writeBuffer);
       remaining -= write;
+      if((System.currentTimeMillis() - stime) > 1){
+        ////System.out.println("writing 2 ====="+ (System.currentTimeMillis() - stime));
+      }
     }
 
-    if(remaining == 0){
-      writeBuffer = null;
-      jumboText = null;
-      synchronized (key) {
-        if (key.isValid()) {
-          key.interestOps(SelectionKey.OP_READ);
-          key.selector().wakeup();
-        }
-        readyForPackaging = true;
+    if(remaining == 0 && !readyForPackaging){
+     //
+      // System.out.println("Comple senging "+System.currentTimeMillis());
+     // //System.out.println("Attempting to write remaining");
+      if(jumboText instanceof CorrelatedPacket) {
+        CorrelatedPacket correlatedPacket = (CorrelatedPacket) jumboText;
+        //if(System.currentTimeMillis() - startLog > 0) {
+          log(correlatedPacket, 3, "" + (System.currentTimeMillis() ));
+        //}
+        //  correlatedPacket.setDebugTime(System.currentTimeMillis());
       }
-      writeResponse(sc);
+      synchronized (this) {
+        writeBuffer = null;
+        jumboText = null;
+        readyForPackaging = true;
+        //writeResponse(sc);
+      }
+    }
+
+    if((System.currentTimeMillis() - stime) > 1){
+      //System.out.println("writing 4 ====="+ (System.currentTimeMillis() - stime));
     }
   }
 
-  private synchronized void writeResponse(SocketChannel sc) throws IOException {
+  private void log(CorrelatedPacket correlatedPacket, int space, String... str) {
+    if( correlatedPacket.getDebugTime() > 0 && System.currentTimeMillis() - correlatedPacket.getDebugTime() >= 0){
+     // System.out.println("start the log "+System.currentTimeMillis());
+      // System.out.println(correlatedPacket.getDebugTime()+" Debug time receive"+space+" = "+(System.currentTimeMillis() - correlatedPacket.getDebugTime() ) +
+         //                       " type = "+correlatedPacket.getType() + Arrays.toString(str));
+        //correlatedPacket.setDebugTime(System.currentTimeMillis());
+    }
+  }
+
+  private void writeResponse(SocketChannel sc) throws IOException {
     if(!readyForPackaging){
       return;
     }
@@ -401,41 +495,100 @@ public class SMQConnection implements javax.jms.Connection {
     while (!serializationsQueue.isEmpty()) {
       serializationList.add(serializationsQueue.poll());
     }
-    if(serializationList.size() > 0)
+    if(serializationList.size() > 0) {
       createPacketAndWrite(serializationList);
+    }
   }
 
   private void createPacketAndWrite(List<Serialization> serializationList) throws IOException {
-    ByteArrayOutputStream bao = new ByteArrayOutputStream();
-    DataOutputStream dos = new DataOutputStream(bao);
-    for(Serialization serialization: serializationList){
-      dos.writeInt(serialization.getSize());
-      dos.writeShort(serialization.getType());
-      dos.write(serialization.getBuffer());
+
+    //System.out.println("sending jumbo in "+serializationList);
+    if(serializationList.size() > 1){
+
+      ByteArrayOutputStream bao = new ByteArrayOutputStream();
+      DataOutputStream dos = new DataOutputStream(bao);
+      for(Serialization serialization: serializationList){
+
+        dos.writeInt(serialization.getSize());
+        dos.writeShort(serialization.getType());
+        dos.write(serialization.getBuffer());
+      }
+      jumboText = new JumboText();
+      ((JumboText)jumboText).setBytes(bao.toByteArray());
+      ((JumboText)jumboText).setNumberOfItems(serializationList.size());
+      sentItem.addAndGet(((JumboText)jumboText).getNumberOfItems());
+    } else {
+      jumboText = serializationList.get(0);
+      if(jumboText instanceof CorrelatedPacket)
+        log((CorrelatedPacket) jumboText,1, "remain "+remaining+" "+readyForPackaging+" "+Thread.currentThread().getName());
+        //((CorrelatedPacket)jumboText).setDebugTime(System.currentTimeMillis());
     }
 
-    // System.out.println("sending messages in "+(System.currentTimeMillis() - stime));
-    jumboText = new JumboText();
-    jumboText.setBytes(bao.toByteArray());
-    jumboText.setNumberOfItems(serializationList.size());
-    sentItem.addAndGet(jumboText.getNumberOfItems());
-    if(key != null)
-    synchronized (key) {
+    if(key != null) {
       if (key.isValid()) {
-        key.interestOps( SelectionKey.OP_READ | SelectionKey.OP_WRITE);
-        key.selector().wakeup();
+        while (remaining > 0 ){
+         // System.out.println("sending jumbo in ........"+remaining+" "+Thread.currentThread().getName());
+          synchronized (key) {
+            key.interestOps(key.interestOps() | SelectionKey.OP_WRITE);
+          }
+          key.selector().wakeup();
+          waitOn(writeWait);
+          writeJumbo(socketChannel);
+
+         // System.out.println("sending jumbo in ........"+remaining+" "+Thread.currentThread().getName());
+        }
+        remaining = Integer.BYTES + Short.BYTES;
+      } else {
+        //System.out.println("Invalid key..");
       }
     }
   }
 
-  private void readRequest(SocketChannel sc) throws IOException {
+  private void waitOn(AtomicBoolean waitObject) {
+    try {
+      synchronized (waitObject) {
+        while(waitObject.get()){
+          waitObject.wait();
+        }
+        waitObject.set(true);
+      }
+    }
+    catch (InterruptedException e) {
+      e.printStackTrace();
+    }
+  }
+
+  public void wakeForObject(AtomicBoolean obj){
+    synchronized (obj) {
+      obj.set(false);
+      obj.notify();
+    }
+  }
+
+  public void wakeForWrite(){
+    wakeForObject(writeWait);
+  }
+
+  public void wakeForRead(){
+    wakeForObject(readWait);
+  }
+
+  public void readRequest(SocketChannel sc) throws IOException {
       requestReader.tryComplete(sc);
       if(requestReader.complete()){
         handleIncomingPacket(requestReader.getObject());
+      } else {
+        synchronized (key) {
+          key.interestOps(key.interestOps() | SelectionKey.OP_READ);
+          key.selector().wakeup();
+        }
+        waitOn(readWait);
+        readRequest(sc);
       }
   }
 
   private void handleIncomingPacket(Serialization packet) throws IOException {
+    ////System.out.println("packet");
     if(packet instanceof JumboText) {
       JumboText jumboText = (JumboText)packet;
       ByteArrayInputStream inputStream = new ByteArrayInputStream(jumboText.getBytes());
@@ -475,27 +628,19 @@ public class SMQConnection implements javax.jms.Connection {
     } else if(packet instanceof SMQMessage){
       handleConsumerMessage((SMQMessage) packet);
     } else if(packet instanceof CorrelatedPacket){
+      ////System.out.println("packet");
       CorrelatedPacket correlatedPacket = (CorrelatedPacket)packet;
       correlatedPacket.getPacketId();
+     // //System.out.println(correlatedPacket.getDebugTime());
+      log(correlatedPacket, 4);
       synchronized (sendAwait) {
         SMQConnection.this.correlatedsAckAwaited.remove(correlatedPacket.getPacketId());
+        if(debugTiming.containsKey(correlatedPacket.getPacketId())) {
+          long time = System.currentTimeMillis() - debugTiming.get(correlatedPacket.getPacketId());
+          if (time > 100)
+            System.out.println("timing in packet " + (time) + " packet " + correlatedPacket.getPacketId() + " type " + correlatedPacket.getType());
+        }
         sendAwait.notifyAll();
-      }
-    }
-  }
-
-  class NetworkThread implements Runnable {
-
-
-    @Override
-    public void run() {
-
-    //  System.out.println("NetworkThread thread started "+SMQConnection.this.getConnectionId());
-      try {
-        infiniteSelect();
-      }
-      catch (IOException e) {
-        e.printStackTrace();
       }
     }
   }
@@ -516,7 +661,6 @@ public class SMQConnection implements javax.jms.Connection {
     ByteBuffer size = ByteBuffer.allocate(INT_PLUS_MESSAGE_TYE);
     private boolean emptyByte = true;
     short messageType;
-    WiredObjectFactory rf = new ConstArrayWiredObjectFactory();
 
     public void tryComplete(SocketChannel ssc) throws IOException {
 
@@ -545,7 +689,10 @@ public class SMQConnection implements javax.jms.Connection {
     }
 
     protected int readOrThrowException(SocketChannel ssc, ByteBuffer bb) throws IOException {
+      long stime = System.currentTimeMillis();
       int readBytes = ssc.read(bb);
+      if(System.currentTimeMillis() - stime > 0)
+      System.out.println("Individual Reading time ====="+(System.currentTimeMillis() - stime));
       if(readBytes < 0){
         throw new IOException("Channel "+ssc);
       }

@@ -35,18 +35,24 @@ public class TransactionalStoreImpl implements TransactionalStore {
 
   @Override
   public void commit(ConnectionContext connectionContext, CommitTransaction commitTransaction) throws JMSException, IOException {
-
+    //System.out.println("Enqueu..");
     broker.enqueueFileIo(new Task() {
       @Override
       public void perform() throws Exception {
-        long stime = System.currentTimeMillis();
-        for (SMQMessage message : messageList) {
-          String qname = ((QueueInfo) message.getJMSDestination()).getQueueName();
-          MessageStore<SMQMessage> messageStore = broker.getMainMessageStore(qname);
-          messageStore.addMessage(message);
-        }
-        System.out.println("time in commiting " + (System.currentTimeMillis() - stime) +
-                                   " of "+messageList.size() + " "+connectionContext.getInfo().getConnectionId());
+       try {
+       //  System.out.println("Enqueu.."+messageList.size());
+         long stime = System.currentTimeMillis();
+         for (SMQMessage message : messageList) {
+           String qname = ((QueueInfo) message.getJMSDestination()).getQueueName();
+           MessageStore<SMQMessage> messageStore = broker.getMainMessageStore(qname);
+           messageStore.addMessage(message);
+         }
+         //System.out.println("time in commiting " + (System.currentTimeMillis() - stime) +
+           //                         " of " + messageList.size() + " " + connectionContext.getInfo().getConnectionId());
+       }catch (Exception e){
+         e.printStackTrace();
+         throw e;
+       }
       }
     }, new Task() {
       @Override

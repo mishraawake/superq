@@ -16,6 +16,7 @@ public class SMQTextMessageHandler implements RequestHandler<SMQTextMessage> {
   @Override
   public void handle(SMQTextMessage message, ConnectionContext connectionContext) {
 
+    //System.out.println("getting message");
     try {
       SBProducerContext producerContext =  handleError(message, connectionContext);
       if(producerContext != null){

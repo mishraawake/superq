@@ -10,7 +10,13 @@ public class ConnectionInfoHandler implements RequestHandler<ConnectionInfo> {
 
   @Override
   public void handle(ConnectionInfo info, ConnectionContext connectionContext) {
+    long stime = System.currentTimeMillis();
+    //System.out.println(info);
     connectionContext.setInfo(info);
+    if(System.currentTimeMillis() - info.getDebugTime()  >= 0){
+      System.out.println("Debug time = "+( System.currentTimeMillis() - info.getDebugTime()));
+     // info.setDebugTime(System.currentTimeMillis());
+    }
     try {
       connectionContext.sendAsyncPacket(info);
     }
